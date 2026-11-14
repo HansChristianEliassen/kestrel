@@ -5,10 +5,11 @@ use eframe::egui;
 use crate::cleaner::{clean_items, scan_all};
 use crate::gamemode;
 use crate::optimizer::{games, gaming, health, Preset, Tweak};
-use crate::system::{create_restore_point, has_battery, is_admin, windows_build};
+use crate::system::{create_restore_point, is_admin, windows_build};
 use crate::ui::components::{accent_button, button, confirm, dialog, dialog_buttons, dialog_title, secondary, toasts, Toast, BG, SIDEBAR};
+use crate::utils::log;
 use crate::utils::logging::read_history;
-use crate::{startup, uninstaller};
+use crate::{startup, uninstaller, update};
 use state::*;
 
 pub struct App {
@@ -35,6 +36,11 @@ pub struct App {
     /// The window was closed to the tray: minimized, without a taskbar button.
     tucked: bool,
     tucked_seen: bool,
+    pub(crate) updates: UpdateState,
+    /// The once-per-launch automatic update check has been considered.
+    update_started: bool,
+    /// Start this exe (the freshly installed update) once Kestrel has closed.
+    relaunch: Option<std::path::PathBuf>,
 }
 
 impl App {
@@ -59,7 +65,18 @@ impl App {
             exiting: false,
             tucked: false,
             tucked_seen: false,
+            updates: UpdateState::default(),
+            update_started: false,
+            relaunch: None,
         };
+        // This launch is the new version (or the update was never installed): the previous exe is no longer needed.
+        update::clean_up();
+        if build < 22000 {
+            app.show_error(
+                "Windows 11 required",
+                "Kestrel supports Windows 11 only. On this version of Windows some settings won't exist or won't do anything.",
+            );
+        }
         // Game Mode was still on when Kestrel last stopped (crash, power cut): put everything back now.
         if gamemode::is_active() {
             let (lines, ok) = gamemode::restore();
@@ -170,6 +187,55 @@ impl App {
                 (self.tucked, self.tucked_seen) = (false, false);
             }
             _ => {}
+        }
+    }
+
+    /// Asks GitHub for a newer release in the background. `manual` reports "up to date" and errors too.
+    pub(crate) fn start_update_check(&mut self, ctx: &egui::Context, manual: bool) {
+        if !self.updates.check.running() {
+            self.updates.manual = manual;
+            self.updates.check.start(ctx, update::latest);
+        }
+    }
+
+    pub(crate) fn start_update_download(&mut self, ctx: &egui::Context) {
+        let Some(release) = self.updates.available.clone() else { return };
+        if self.updates.download.running() {
+            return;
+        }
+        let progress = self.updates.progress.clone();
+        self.updates.download.start(ctx, move || update::download(&release, &progress.0, &progress.1));
+    }
+
+    /// Asks before closing Kestrel to install the verified update ("Later" keeps it for Settings > Updates).
+    pub(crate) fn run_install_update(&mut self, _ctx: &egui::Context) {
+        let version = self.updates.available.as_ref().map(|r| r.version.clone()).unwrap_or_default();
+        let game_mode = if gamemode::is_active() { " Game Mode ends first and puts your settings back." } else { "" };
+        self.confirm = Some(Confirm {
+            title: format!("Restart to install Kestrel {version}?"),
+            body: format!(
+                "The update was downloaded and its signature checked. Kestrel will close and start the new version.{game_mode}\n\nYour settings, Game Mode setup and saved originals are kept."
+            ),
+            warning: None,
+            ok: "Restart now",
+            action: Action::InstallUpdate,
+        });
+    }
+
+    /// The new version is put in place, then Kestrel closes normally (ending Game Mode first) and starts it.
+    fn install_update(&mut self, ctx: &egui::Context) {
+        let Some(staged) = self.updates.staged.take() else { return };
+        let target = match std::env::current_exe() {
+            Ok(t) => t,
+            Err(e) => return self.show_error("Update", e.to_string()),
+        };
+        match update::install(&staged, &target) {
+            Ok(()) => {
+                self.relaunch = Some(target);
+                self.exiting = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Err(e) => self.show_error("Update not installed", e),
         }
     }
 
@@ -298,9 +364,11 @@ impl App {
         self.opt.stage = OptStage::Scanning;
         let build = self.build;
         self.opt.scan.start(ctx, move || {
-            let battery = has_battery();
-            let recommended: Vec<Tweak> = Tweak::ALL.into_iter().filter(|t| recommended(Preset::Performance, *t, build, battery)).collect();
-            let (active, tweaks): (Vec<Tweak>, Vec<Tweak>) = recommended.into_iter().partition(|t| t.is_applied());
+            let recommended: Vec<Tweak> =
+                Tweak::ALL.into_iter().filter(|t| Preset::Performance.includes(*t) && t.unsupported(build).is_none()).collect();
+            // A correctly configured PC shouldn't be offered changes: settings already on or without effect here are left out.
+            let (active, tweaks): (Vec<Tweak>, Vec<Tweak>) =
+                recommended.into_iter().partition(|t| t.is_applied() || t.not_needed().is_some());
             let mut refresh = Vec::new();
             let mut attention = Vec::new();
             for c in health::run() {
@@ -391,6 +459,7 @@ impl App {
             Action::ApplyTweaks(tweaks) => self.gaming.apply.start(ctx, move || apply_tweaks(&tweaks)),
             // Reverse order: per-plan power settings are restored before the power plan itself switches back.
             Action::RestoreAll => self.start_restore(ctx, Tweak::ALL.into_iter().rev().collect(), true),
+            Action::InstallUpdate => self.install_update(ctx),
         }
     }
 
@@ -433,6 +502,38 @@ impl App {
         if let Some((apps, note)) = self.apps.load.poll() {
             self.apps.apps = apps;
             self.apps.note = note;
+        }
+        if let Some(result) = self.updates.check.poll() {
+            let manual = std::mem::take(&mut self.updates.manual);
+            match result {
+                Ok(found) => {
+                    self.updates.last_error = None;
+                    self.updates.prefs.last_check = update::now();
+                    if let Err(e) = self.updates.prefs.save() {
+                        self.show_error("Updates", e);
+                    }
+                    if found.is_none() && manual {
+                        self.show_notice("No update available", format!("Kestrel {} is the latest version.", update::CURRENT));
+                    }
+                    self.updates.available = found;
+                }
+                // Automatic checks fail quietly (offline is normal); the reason shows in Settings > Updates.
+                Err(e) => {
+                    if manual {
+                        self.show_error("Couldn't check for updates", e.clone());
+                    }
+                    self.updates.last_error = Some(e);
+                }
+            }
+        }
+        if let Some(result) = self.updates.download.poll() {
+            match result {
+                Ok(path) => {
+                    self.updates.staged = Some(path);
+                    self.run_install_update(ctx);
+                }
+                Err(e) => self.show_error("Update not installed", e),
+            }
         }
         if let Some((lines, leftovers)) = self.apps.uninstall.poll() {
             self.apps.leftovers = leftovers;
@@ -503,36 +604,62 @@ impl App {
             self.optimize_dialog(ctx);
         }
         self.refresh_trial_dialog(ctx);
+        // First launch: ask once whether to check for updates. Nothing goes online before the answer.
+        if !self.updates.prefs.asked && self.confirm.is_none() && self.opt.stage == OptStage::Closed {
+            self.update_opt_in(ctx);
+        }
         toasts(ctx, &mut self.toasts);
     }
 }
 
 /// Checkbox state for a preset, leaving out tweaks that do nothing on this Windows build.
 pub(crate) fn preset_selection(p: Preset, build: u32) -> [bool; Tweak::ALL.len()] {
-    let battery = has_battery();
-    Tweak::ALL.map(|t| recommended(p, t, build, battery))
+    Tweak::ALL.map(|t| p.includes(t) && t.unsupported(build).is_none())
 }
 
-/// Presets never pick the High performance plan on a laptop or tablet: it drains the battery for little gain.
-fn recommended(p: Preset, t: Tweak, build: u32, battery: bool) -> bool {
-    p.includes(t) && t.unsupported(build).is_none() && !(battery && t == Tweak::HighPerfPower)
-}
-
+/// One line per tweak. Settings that are already right or wouldn't do anything on this PC are reported
+/// as such and left alone, so the summary shows what really changed.
 fn apply_tweaks(tweaks: &[Tweak]) -> Vec<String> {
     tweaks
         .iter()
-        .map(|t| match t.apply() {
-            Ok(()) => format!("✔ {}", t.info().title),
-            Err(e) => format!("✖ {}: {e}", t.info().title),
+        .map(|t| {
+            let title = t.info().title;
+            if let Some(why) = t.not_needed() {
+                return format!("{NOT_NEEDED}{title}. {why}");
+            }
+            if t.is_applied() {
+                return format!("{ALREADY}{title}");
+            }
+            match t.apply() {
+                Ok(()) => match t.takes_effect() {
+                    Some(when) => format!("✔ {title} ({when})"),
+                    None => format!("✔ {title}"),
+                },
+                Err(e) => format!("✖ {title}: {e}"),
+            }
         })
         .collect()
 }
+
+/// Line prefixes the result summary groups by.
+pub(crate) const ALREADY: &str = "Already set: ";
+pub(crate) const NOT_NEEDED: &str = "Not needed: ";
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.tray_tick(ctx);
         self.poll(ctx);
         self.game_mode_tick(ctx);
+        // Once per launch, after the window is up: never delays startup, and at most daily.
+        if !self.update_started {
+            self.update_started = true;
+            if self.updates.prefs.check_due(update::now()) {
+                self.start_update_check(ctx, false);
+            }
+        }
+        if self.updates.download.running() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
         if self.page == Page::Dashboard && !self.overview_requested {
             self.overview_requested = true;
             self.refresh_gaming(ctx);
@@ -549,6 +676,7 @@ impl eframe::App for App {
                 // Readable line length on wide windows: content stops growing at 920 px.
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                     ui.set_max_width(ui.available_width().min(920.0));
+                    self.update_banner(ui);
                     match self.page {
                         Page::Dashboard => self.dashboard(ui),
                         Page::Cleaner => self.cleaner_page(ui),
@@ -573,6 +701,12 @@ impl eframe::App for App {
         if gamemode::is_active() {
             gamemode::restore();
         }
+        // The new instance waits for this one's single-instance lock, so it starts once this process is gone.
+        if let Some(exe) = self.relaunch.take() {
+            if std::process::Command::new(&exe).arg(crate::system::RELAUNCHED).spawn().is_err() {
+                log("Update: installed, but the new version didn't start; open Kestrel again");
+            }
+        }
     }
 }
 
@@ -581,12 +715,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn presets_leave_out_power_plan_on_battery() {
-        assert!(recommended(Preset::Performance, Tweak::HighPerfPower, 26200, false));
-        assert!(!recommended(Preset::Performance, Tweak::HighPerfPower, 26200, true));
-        assert!(recommended(Preset::Performance, Tweak::GameMode, 26200, true));
-        for t in [Tweak::NoMouseAccel, Tweak::UsbSuspendOff, Tweak::NoTransparency, Tweak::NoAnimations, Tweak::NoBackgroundApps] {
-            assert!(!recommended(Preset::Performance, t, 19045, false), "{t:?} should not be in a preset");
+    fn presets_use_power_mode_not_plan() {
+        let perf = preset_selection(Preset::Performance, 26200);
+        assert!(perf[Tweak::PowerMode.index()] && perf[Tweak::GameMode.index()]);
+        let off = [Tweak::HighPerfPower, Tweak::NoMouseAccel, Tweak::UsbSuspendOff, Tweak::NoTransparency, Tweak::NoAnimations];
+        for t in off.into_iter().chain([Tweak::NoBackgroundApps]) {
+            assert!(!perf[t.index()], "{t:?} should not be in a preset");
         }
+        assert!(!preset_selection(Preset::Balanced, 26200)[Tweak::PowerMode.index()]);
     }
 }

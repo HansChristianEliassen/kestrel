@@ -2,6 +2,7 @@
 
 pub mod components;
 mod gamemode;
+mod updates;
 
 use std::path::Path;
 
@@ -738,7 +739,7 @@ impl App {
         // Saved original but no longer active: Windows, another app or the user changed it back.
         let changed: Vec<Tweak> = Tweak::ALL
             .into_iter()
-            .filter(|t| t.unsupported(build).is_none() && g.status.get(t.index()).is_some_and(|&(applied, backup)| backup && !applied))
+            .filter(|t| t.unsupported(build).is_none() && g.status.get(t.index()).is_some_and(|(applied, backup, _)| *backup && !applied))
             .collect();
         let mut reapply = false;
         if !changed.is_empty() {
@@ -753,10 +754,17 @@ impl App {
                 caption(ui, if recommended { "Low risk, useful on most PCs" } else { "Useful in specific cases; check the trade-off" });
             });
             group(ui, |ui| {
-                for (i, t) in Tweak::ALL.into_iter().filter(|t| Preset::Balanced.includes(*t) == recommended).enumerate() {
+                let has_backup = |t: &Tweak| g.status.get(t.index()).is_some_and(|s| s.1);
+                // Windows 10-only setting: shown only so an old change can still be reverted.
+                let shown: Vec<Tweak> = Tweak::ALL
+                    .into_iter()
+                    .filter(|t| Preset::Balanced.includes(*t) == recommended && (*t != Tweak::NoBackgroundApps || has_backup(t)))
+                    .collect();
+                for (i, t) in shown.into_iter().enumerate() {
                     let info = t.info();
-                    let (applied, backup) = g.status.get(t.index()).copied().unwrap_or_default();
-                    let unsupported = t.unsupported(build);
+                    let (applied, backup, not_needed) = g.status.get(t.index()).cloned().unwrap_or_default();
+                    let unsupported = t.unsupported(build).map(str::to_string).or(not_needed);
+                    let not_needed = unsupported.is_some() && t.unsupported(build).is_none();
                     if unsupported.is_some() {
                         g.selected[t.index()] = false;
                     }
@@ -777,7 +785,7 @@ impl App {
                                 ui.horizontal(|ui| {
                                     ui.add_space(26.0);
                                     ui.vertical(|ui| {
-                                        ui.label(RichText::new(unsupported.unwrap_or(info.purpose)).size(CAPTION).color(TEXT_2));
+                                        ui.label(RichText::new(unsupported.as_deref().unwrap_or(info.purpose)).size(CAPTION).color(TEXT_2));
                                         if unsupported.is_none() {
                                             caption(ui, format!("Trade-off: {}", info.drawback));
                                         }
@@ -793,6 +801,7 @@ impl App {
                                     revert = Some(t);
                                 }
                                 match unsupported {
+                                    Some(_) if not_needed => status(ui, Status::Ok, "Not needed"),
                                     Some(_) => status(ui, Status::Neutral, "Not available"),
                                     None if backup && !applied => status(ui, Status::Caution, "Changed back"),
                                     None if applied => status(ui, Status::Ok, "On"),
@@ -985,6 +994,8 @@ impl App {
             }
         }
 
+        self.updates_section(ui);
+
         section(ui, "Recovery", |_| {});
         let (mut restore, mut point) = (false, false);
         let busy = self.gaming.apply.running();
@@ -1140,11 +1151,7 @@ impl App {
                     });
                 }
                 OptStage::Done(lines) => {
-                    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                        for l in lines {
-                            ui.label(RichText::new(l).color(TEXT_2));
-                        }
-                    });
+                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| result_summary(ui, lines));
                     dialog_buttons(ui, |ui| {
                         if accent_button(ui, true, "Close").clicked() {
                             next = Some(OptStage::Closed);
@@ -1164,6 +1171,38 @@ impl App {
             self.opt.stage = s;
         }
     }
+}
+
+/// What Optimize PC did, grouped so it's clear what actually changed. No scores or FPS claims.
+fn result_summary(ui: &mut Ui, lines: &[String]) {
+    use crate::app::{ALREADY, NOT_NEEDED};
+    let failed: Vec<&str> = lines.iter().filter_map(|l| l.strip_prefix("✖ ")).collect();
+    let changed: Vec<&str> = lines.iter().filter_map(|l| l.strip_prefix("✔ ")).collect();
+    let already: Vec<&str> = lines.iter().filter_map(|l| l.strip_prefix(ALREADY)).collect();
+    let not_needed: Vec<&str> = lines.iter().filter_map(|l| l.strip_prefix(NOT_NEEDED)).collect();
+    let other: Vec<&str> =
+        lines.iter().map(String::as_str).filter(|l| !["✖ ", "✔ ", ALREADY, NOT_NEEDED].iter().any(|p| l.starts_with(p))).collect();
+    for (title, list, kind) in [
+        ("Changed", changed, Status::Ok),
+        ("Failed", failed, Status::Caution),
+        ("Already set", already, Status::Neutral),
+        ("Not needed on this PC", not_needed, Status::Neutral),
+        ("Files and other results", other, Status::Neutral),
+    ] {
+        if list.is_empty() {
+            continue;
+        }
+        ui.add_space(S2);
+        status(ui, kind, &format!("{title} ({})", list.len()));
+        for l in list {
+            ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                ui.add(Label::new(RichText::new(l).size(CAPTION + 1.0).color(TEXT_2)).wrap());
+            });
+        }
+    }
+    ui.add_space(S3);
+    caption(ui, "No restart is needed. Every changed setting can be put back in Settings > Restore everything. Results vary by PC: Kestrel doesn't promise a particular FPS gain.");
 }
 
 fn restore_all_confirm() -> Confirm {

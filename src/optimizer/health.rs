@@ -51,6 +51,7 @@ pub fn run() -> Vec<Check> {
         refresh_rate(),
         gpu_driver(),
         memory_speed(),
+        memory_in_use(),
         storage(),
         network(),
         overlays(),
@@ -313,6 +314,31 @@ fn graphics_features() -> Check {
         false,
         Some(("Graphics settings", "ms-settings:display-advancedgraphics")),
     )
+}
+
+/// How full memory is right now, and which open apps use the most. A one-off reading, not monitoring.
+fn memory_in_use() -> Check {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut m = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
+    if unsafe { GlobalMemoryStatusEx(&mut m) }.is_err() {
+        return check("Memory in use", "Couldn't read memory use.".into(), false, None);
+    }
+    let games: Vec<String> = crate::gamemode::Config::load().games.iter().map(|g| g.file_name()).collect();
+    let top: Vec<String> = crate::gamemode::watch::app_memory(&games)
+        .into_iter()
+        .take(4)
+        .map(|(name, bytes)| format!("{} {}", name.trim_end_matches(".exe"), fmt_bytes(bytes)))
+        .collect();
+    let attention = m.dwMemoryLoad >= 80;
+    let mut detail =
+        format!("{} of {} in use ({}%).", fmt_bytes(m.ullTotalPhys - m.ullAvailPhys), fmt_bytes(m.ullTotalPhys), m.dwMemoryLoad);
+    if !top.is_empty() {
+        detail.push_str(&format!(" Largest open apps: {}.", top.join(", ")));
+    }
+    if attention {
+        detail.push_str(" With this little free, games can stutter while Windows swaps to disk. Close apps you don't need before playing; Game Mode can close a list of apps for you.");
+    }
+    check("Memory in use", detail, attention, None)
 }
 
 /// A restart Windows is waiting for (installed updates or servicing), which can interrupt a game session.

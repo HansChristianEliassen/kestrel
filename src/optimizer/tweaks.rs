@@ -15,6 +15,7 @@ use crate::system::{broadcast_setting_change, run_hidden};
 use crate::utils::{backup, log};
 
 const HIGH_PERFORMANCE: &str = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
+const BALANCED: &str = "381b4222-f694-41f0-9685-ff5bb260df2e";
 const SUB_USB: &str = "2a737441-1930-4402-8d77-b2bebba308a3";
 const USB_SELECTIVE_SUSPEND: &str = "48e6b7a6-50f5-4782-a5d4-53bb8f07e226";
 const DX_PREFS: &str = r"Software\Microsoft\DirectX\UserGpuPreferences";
@@ -29,6 +30,7 @@ pub enum Tweak {
     NoTransparency,
     NoAnimations,
     WindowedGames,
+    PowerMode,
     HighPerfPower,
     UsbSuspendOff,
     NoMouseAccel,
@@ -42,13 +44,14 @@ pub struct Info {
 }
 
 impl Tweak {
-    pub const ALL: [Tweak; 9] = [
+    pub const ALL: [Tweak; 10] = [
         Tweak::GameMode,
         Tweak::GameDvrOff,
         Tweak::NoBackgroundApps,
         Tweak::NoTransparency,
         Tweak::NoAnimations,
         Tweak::WindowedGames,
+        Tweak::PowerMode,
         Tweak::HighPerfPower,
         Tweak::UsbSuspendOff,
         Tweak::NoMouseAccel,
@@ -71,8 +74,32 @@ impl Tweak {
         }
     }
 
+    /// Why changing this setting would do nothing on this PC right now (checked live, so call it off the UI thread).
+    pub fn not_needed(self) -> Option<String> {
+        match self {
+            // Windows only applies power modes on top of the Balanced plan; other plans set performance themselves.
+            Tweak::PowerMode => match active_power_scheme() {
+                Ok(plan) if plan != BALANCED => Some(format!(
+                    "Power modes only apply to the Balanced power plan, and this PC uses {}. That plan already decides CPU performance.",
+                    if plan == HIGH_PERFORMANCE { "High performance".to_string() } else { "another plan".to_string() }
+                )),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// When the change takes effect, if not right away.
+    pub fn takes_effect(self) -> Option<&'static str> {
+        match self {
+            Tweak::WindowedGames => Some("takes effect the next time each game starts"),
+            _ => None,
+        }
+    }
+
     fn key(self) -> &'static str {
         match self {
+            Tweak::PowerMode => "power_mode",
             Tweak::GameMode => "game_mode",
             Tweak::GameDvrOff => "background_recording",
             Tweak::HighPerfPower => "power_plan",
@@ -98,6 +125,12 @@ impl Tweak {
                 "Stops Xbox Game Bar from constantly recording the last few minutes of gameplay (\"Record what happened\").",
                 "Frees GPU encoder time and disk writes while you play.",
                 "You can't save a clip of something that just happened. Manual recording still works.",
+            ),
+            Tweak::PowerMode => (
+                "Best performance power mode",
+                "Sets Windows 11's power mode (Settings > System > Power) to Best performance for the power source you're on now. Windows then lets the CPU boost sooner and park fewer cores.",
+                "Most noticeable on laptops and on desktops using the Balanced plan, where the default mode holds clock speeds back.",
+                "More power use and heat. Only the current power source changes (plugged in or battery), and it only applies with the Balanced power plan.",
             ),
             Tweak::HighPerfPower => (
                 "High performance power plan",
@@ -163,6 +196,7 @@ impl Tweak {
     /// Current state, serialized so it can be written back by `write`.
     pub(crate) fn snapshot(self) -> Result<String, String> {
         Ok(match self {
+            Tweak::PowerMode => overlay::get()?,
             Tweak::HighPerfPower => active_power_scheme()?,
             Tweak::NoAnimations => get_min_animate()?.to_string(),
             Tweak::NoMouseAccel => get_mouse()?.map(|v| v.to_string()).join(","),
@@ -180,6 +214,13 @@ impl Tweak {
     /// Writes the optimized state (`None`) or a saved snapshot.
     pub(crate) fn write(self, saved: Option<&str>) -> Result<(), String> {
         match self {
+            Tweak::PowerMode => {
+                let guid = saved.unwrap_or(overlay::BEST_PERFORMANCE);
+                if !is_guid(guid) {
+                    return Err("Saved power mode is invalid.".into());
+                }
+                overlay::set(guid)
+            }
             Tweak::HighPerfPower => {
                 let guid = match saved {
                     Some(g) => g.to_string(),
@@ -232,6 +273,7 @@ impl Tweak {
 
     pub fn is_applied(self) -> bool {
         match self {
+            Tweak::PowerMode => overlay::get().is_ok_and(|g| g == overlay::BEST_PERFORMANCE),
             // Missing value = Windows' default, which is off.
             Tweak::GameDvrOff => self.registry().iter().all(|(k, v, t)| read_dword(k, v).unwrap_or(0) == *t),
             Tweak::HighPerfPower => active_power_scheme().is_ok_and(|g| g == HIGH_PERFORMANCE),
@@ -297,8 +339,9 @@ fn parse_i32(s: &str) -> Result<i32, String> {
     s.trim().parse().map_err(|_| "Saved value is invalid.".to_string())
 }
 
+/// "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" exactly.
 fn is_guid(s: &str) -> bool {
-    s.len() == 36 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+    s.len() == 36 && s.char_indices().all(|(i, c)| if [8, 13, 18, 23].contains(&i) { c == '-' } else { c.is_ascii_hexdigit() })
 }
 
 fn read_dword(key: &str, name: &str) -> Option<u32> {
@@ -357,6 +400,48 @@ fn usb_suspend() -> Result<u32, String> {
         .ok_or_else(|| "This power plan has no USB selective suspend setting.".into())
 }
 
+/// Windows 11 power mode ("overlay" on top of the Balanced plan). Settings > Power uses these powrprof.dll
+/// functions; they aren't in the SDK headers, so they're looked up at run time and missing ones fail cleanly.
+mod overlay {
+    use windows::core::{s, w, GUID};
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32};
+
+    pub const BEST_PERFORMANCE: &str = "ded574b5-45a0-4f42-8737-46345c09c238";
+
+    fn proc(name: windows::core::PCSTR) -> Result<unsafe extern "system" fn() -> isize, String> {
+        unsafe {
+            let dll = LoadLibraryExW(w!("powrprof.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32).map_err(|e| e.message())?;
+            GetProcAddress(dll, name).ok_or_else(|| "This version of Windows has no power mode setting.".into())
+        }
+    }
+
+    /// The power mode chosen for the current power source, as a lower-case GUID (all zeros = Balanced).
+    /// "Actual" rather than "effective": the effective mode reads as Balanced whenever a non-Balanced plan overrides it.
+    pub fn get() -> Result<String, String> {
+        type Get = unsafe extern "system" fn(*mut GUID) -> u32;
+        let f: Get = unsafe { std::mem::transmute(proc(s!("PowerGetActualOverlayScheme"))?) };
+        let mut g = GUID::zeroed();
+        match unsafe { f(&mut g) } {
+            0 => Ok(format!("{g:?}").to_lowercase()),
+            e => Err(format!("Couldn't read the power mode (error {e}).")),
+        }
+    }
+
+    pub fn set(guid: &str) -> Result<(), String> {
+        type Set = unsafe extern "system" fn(GUID) -> u32;
+        if !super::is_guid(guid) {
+            return Err("Power mode is invalid.".into());
+        }
+        // GUID::from panics on bad input; is_guid has checked the exact layout first.
+        let g = GUID::from(guid);
+        let f: Set = unsafe { std::mem::transmute(proc(s!("PowerSetActiveOverlayScheme"))?) };
+        match unsafe { f(g) } {
+            0 => Ok(()),
+            e => Err(format!("Windows refused the power mode change (error {e}).")),
+        }
+    }
+}
+
 fn active_power_scheme() -> Result<String, String> {
     let out = run_hidden("powercfg", &["/getactivescheme"])?;
     out.split_whitespace().find(|t| is_guid(t)).map(str::to_lowercase).ok_or_else(|| "Could not read the active power plan.".into())
@@ -392,6 +477,14 @@ fn set_mouse(mut m: [i32; 3]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guid_layout() {
+        assert!(is_guid(overlay::BEST_PERFORMANCE));
+        assert!(is_guid("00000000-0000-0000-0000-000000000000"));
+        assert!(!is_guid("ded574b545a04f42873746345c09c238abcd"));
+        assert!(!is_guid("ded574b5-45a0-4f42-8737-46345c09c23g"));
+    }
 
     #[test]
     fn kv_strings() {

@@ -47,14 +47,6 @@ pub fn is_admin() -> bool {
     unsafe { IsUserAnAdmin().as_bool() }
 }
 
-/// True on laptops and tablets (a system battery is present).
-pub fn has_battery() -> bool {
-    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
-    let mut s = SYSTEM_POWER_STATUS::default();
-    // BatteryFlag 128 = no system battery, 255 = unknown.
-    unsafe { GetSystemPowerStatus(&mut s) }.is_ok() && s.BatteryFlag & 128 == 0 && s.BatteryFlag != 255
-}
-
 /// Whether a Windows service is doing anything other than standing stopped. Unknown counts as running.
 pub fn service_running(name: &str) -> bool {
     use windows::Win32::System::Services::{

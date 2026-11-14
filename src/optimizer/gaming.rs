@@ -21,7 +21,7 @@ impl Preset {
     pub fn desc(self) -> &'static str {
         match self {
             Preset::Balanced => "Low-risk changes only. Windows keeps behaving normally.",
-            Preset::Performance => "Adds the High performance power plan (left out on PCs with a battery). Best on a plugged-in desktop.",
+            Preset::Performance => "Adds Windows 11's Best performance power mode for the power source you're on now.",
             Preset::Custom => "Pick individual optimizations yourself.",
         }
     }
@@ -30,7 +30,9 @@ impl Preset {
     pub fn includes(self, t: Tweak) -> bool {
         match self {
             Preset::Balanced => matches!(t, Tweak::GameMode | Tweak::GameDvrOff | Tweak::WindowedGames),
-            Preset::Performance => Preset::Balanced.includes(t) || t == Tweak::HighPerfPower,
+            // Power mode rather than the High performance plan: it's Windows 11's supported switch, and it exists on
+            // Modern Standby laptops that don't offer the old plans.
+            Preset::Performance => Preset::Balanced.includes(t) || t == Tweak::PowerMode,
             Preset::Custom => false,
         }
     }

@@ -113,6 +113,30 @@ pub fn windowed_apps() -> Vec<String> {
     apps
 }
 
+/// Memory used by each program that has a window (all its processes added up), largest first.
+/// Only asks for limited query rights, and skips protected programs and the configured games, so a game and its
+/// anti-cheat are never opened.
+pub fn app_memory(skip: &[String]) -> Vec<(String, u64)> {
+    use windows::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    let apps = windowed_apps();
+    let mut totals: std::collections::HashMap<String, u64> = Default::default();
+    for (pid, name) in process_list() {
+        if !apps.contains(&name) || skip.contains(&name.to_lowercase()) {
+            continue;
+        }
+        let Ok(h) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }) else { continue };
+        let mut c = PROCESS_MEMORY_COUNTERS { cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32, ..Default::default() };
+        if unsafe { K32GetProcessMemoryInfo(h, &mut c, c.cb) }.as_bool() {
+            *totals.entry(name).or_default() += c.WorkingSetSize as u64;
+        }
+        let _ = unsafe { windows::Win32::Foundation::CloseHandle(h) };
+    }
+    let mut list: Vec<(String, u64)> = totals.into_iter().collect();
+    list.sort_by_key(|(_, b)| std::cmp::Reverse(*b));
+    list
+}
+
 /// Sends a normal close request (WM_CLOSE, the same as clicking X) to each listed app's windows.
 /// Never force-closes: an app with unsaved work can still ask, and apps may choose to stay in the tray.
 pub fn close_apps(names: &[String]) -> Vec<String> {

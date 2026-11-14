@@ -86,6 +86,8 @@ pub enum Action {
     Uninstall(Vec<InstalledApp>),
     ApplyTweaks(Vec<Tweak>),
     RestoreAll,
+    /// Swap in the verified update and restart.
+    InstallUpdate,
 }
 
 pub struct Confirm {
@@ -157,7 +159,8 @@ pub struct StartupState {
 }
 
 /// (applied, has saved original) per tweak, in `Tweak::ALL` order.
-pub type TweakStatus = Vec<(bool, bool)>;
+/// Plus why the setting wouldn't do anything on this PC, if it wouldn't.
+pub type TweakStatus = Vec<(bool, bool, Option<String>)>;
 
 /// (display device, old Hz, new Hz)
 pub type RefreshChange = (String, u32, u32);
@@ -204,7 +207,7 @@ impl Default for GamingState {
 }
 
 pub fn tweak_status() -> TweakStatus {
-    Tweak::ALL.iter().map(|t| (t.is_applied(), t.has_backup())).collect()
+    Tweak::ALL.iter().map(|t| (t.is_applied(), t.has_backup(), t.not_needed())).collect()
 }
 
 #[derive(Default, PartialEq)]
@@ -247,6 +250,38 @@ impl Default for GameModeState {
             suppressed: false,
             last_check: std::time::Instant::now(),
             apps: Vec::new(),
+        }
+    }
+}
+
+pub struct UpdateState {
+    pub prefs: crate::update::Prefs,
+    pub check: Job<Result<Option<crate::update::Release>, String>>,
+    /// The check was started from Settings, so "no update" and errors are reported.
+    pub manual: bool,
+    pub available: Option<crate::update::Release>,
+    /// "Remind me later" was chosen this session.
+    pub hidden: bool,
+    pub download: Job<Result<std::path::PathBuf, String>>,
+    /// (bytes done, bytes total) of the running download.
+    pub progress: std::sync::Arc<(std::sync::atomic::AtomicU64, std::sync::atomic::AtomicU64)>,
+    /// Verified update waiting for a restart.
+    pub staged: Option<std::path::PathBuf>,
+    pub last_error: Option<String>,
+}
+
+impl Default for UpdateState {
+    fn default() -> Self {
+        UpdateState {
+            prefs: crate::update::Prefs::load(),
+            check: Job::default(),
+            manual: false,
+            available: None,
+            hidden: false,
+            download: Job::default(),
+            progress: Default::default(),
+            staged: None,
+            last_error: None,
         }
     }
 }

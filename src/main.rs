@@ -8,6 +8,7 @@ mod startup;
 mod system;
 mod ui;
 mod uninstaller;
+mod update;
 mod utils;
 
 use eframe::egui;

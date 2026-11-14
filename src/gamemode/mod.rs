@@ -36,8 +36,10 @@ impl Profile {
 
     pub fn desc(self) -> &'static str {
         match self {
-            Profile::Balanced => "Low-risk only: makes sure Windows Game Mode is on and pauses background recording.",
-            Profile::Performance => "Adds the High performance power plan, keeps USB devices awake and closes the apps in your list.",
+            Profile::Balanced => {
+                "Makes sure Windows Game Mode is on, pauses background recording and switches to the Best performance power mode."
+            }
+            Profile::Performance => "Adds keeping USB devices awake and closing the apps in your list, which frees memory for the game.",
             Profile::Custom => "Only the actions you tick below.",
         }
     }
@@ -57,8 +59,9 @@ impl Profile {
     /// The actions this profile runs; Custom uses the saved custom set.
     pub fn actions(self, config: &Config) -> Vec<Action> {
         match self {
-            Profile::Balanced => vec![Action::WindowsGameMode, Action::RecordingOff],
-            Profile::Performance => Action::ALL.to_vec(),
+            Profile::Balanced => vec![Action::WindowsGameMode, Action::RecordingOff, Action::PowerMode],
+            // The High performance plan stays Custom-only: power mode is Windows 11's supported switch.
+            Profile::Performance => Action::ALL.into_iter().filter(|a| *a != Action::HighPerformance).collect(),
             Profile::Custom => Action::ALL.into_iter().filter(|a| config.custom.contains(a)).collect(),
         }
     }
@@ -68,6 +71,7 @@ impl Profile {
 pub enum Action {
     WindowsGameMode,
     RecordingOff,
+    PowerMode,
     HighPerformance,
     UsbAwake,
     CloseApps,
@@ -75,14 +79,15 @@ pub enum Action {
 
 impl Action {
     /// Order matters: the power plan switches before the per-plan USB setting, and restore runs in reverse.
-    pub const ALL: [Action; 5] =
-        [Action::WindowsGameMode, Action::RecordingOff, Action::HighPerformance, Action::UsbAwake, Action::CloseApps];
+    pub const ALL: [Action; 6] =
+        [Action::WindowsGameMode, Action::RecordingOff, Action::PowerMode, Action::HighPerformance, Action::UsbAwake, Action::CloseApps];
 
     /// The reversible setting behind this action (all but closing apps).
     fn tweak(self) -> Option<Tweak> {
         match self {
             Action::WindowsGameMode => Some(Tweak::GameMode),
             Action::RecordingOff => Some(Tweak::GameDvrOff),
+            Action::PowerMode => Some(Tweak::PowerMode),
             Action::HighPerformance => Some(Tweak::HighPerfPower),
             Action::UsbAwake => Some(Tweak::UsbSuspendOff),
             Action::CloseApps => None,
@@ -93,6 +98,7 @@ impl Action {
         match self {
             Action::WindowsGameMode => "Make sure Windows Game Mode is on",
             Action::RecordingOff => "Pause background game recording",
+            Action::PowerMode => "Best performance power mode",
             Action::HighPerformance => "High performance power plan",
             Action::UsbAwake => "Keep USB devices awake",
             Action::CloseApps => "Close the apps in your list",
@@ -103,6 +109,7 @@ impl Action {
         match self {
             Action::WindowsGameMode => "Windows gives the game priority and holds back Windows Update installs while you play.",
             Action::RecordingOff => "Stops Xbox Game Bar's always-on recording of the last few minutes for this session.",
+            Action::PowerMode => "Switches Windows 11's power mode to Best performance while you play, so the CPU boosts sooner. Most useful on laptops; skipped when your power plan isn't Balanced.",
             Action::HighPerformance => "Keeps the CPU at higher clock speeds while you play. Your previous power plan comes back afterwards.",
             Action::UsbAwake => "Turns off USB selective suspend for the session, avoiding wake-up delays on controllers and headsets.",
             Action::CloseApps => "Politely asks each app in your list to close, like clicking its X. Nothing is force-closed, so apps with unsaved work can still ask you to save.",
@@ -123,6 +130,7 @@ impl Action {
         match self {
             Action::WindowsGameMode => "windows_game_mode",
             Action::RecordingOff => "recording_off",
+            Action::PowerMode => "power_mode",
             Action::HighPerformance => "high_performance",
             Action::UsbAwake => "usb_awake",
             Action::CloseApps => "close_apps",
@@ -271,6 +279,11 @@ pub fn activate(profile: Profile, actions: &[Action], close: &[String], trigger:
     }
     for &a in actions {
         match a.tweak() {
+            // Nothing to change (already set, or no effect on this PC): no snapshot, so nothing to undo either.
+            Some(t) if t.not_needed().is_some() || t.is_applied() => {
+                let why = t.not_needed().unwrap_or_else(|| "already set".into());
+                lines.push(format!("Skipped {}: {why}", a.label()));
+            }
             Some(t) => {
                 // The snapshot is on disk before the setting changes, so a crash right after can still be undone.
                 let result = t.snapshot().and_then(|s| append_session(&format!("undo\t{}\t{s}", a.key()))).and_then(|()| t.write(None));
@@ -354,8 +367,9 @@ mod tests {
     #[test]
     fn profiles() {
         let c = Config { custom: vec![Action::UsbAwake], ..Config::default() };
-        assert_eq!(Profile::Balanced.actions(&c), vec![Action::WindowsGameMode, Action::RecordingOff]);
+        assert_eq!(Profile::Balanced.actions(&c), vec![Action::WindowsGameMode, Action::RecordingOff, Action::PowerMode]);
         assert_eq!(Profile::Performance.actions(&c).len(), 5);
+        assert!(!Profile::Performance.actions(&c).contains(&Action::HighPerformance));
         assert_eq!(Profile::Custom.actions(&c), vec![Action::UsbAwake]);
     }
 

@@ -144,3 +144,31 @@ Reuse: `Job` (`app/state.rs`) for off-thread work; `backup::save_original/get/re
 - Fullscreen optimizations on 24H2 (community): [GeekRewind: what breaks](https://geekrewind.com/what-breaks-when-you-turn-off-full-screen-optimizations-in-windows-11-advanced-app-properties/) · [ElevenForum](https://elevenforum.com/t/enable-or-disable-fullscreen-optimizations-for-games-in-windows-11.4945/)
 - PC Manager: [WTOP / Data Doctors (2026)](https://wtop.com/tech/2026/01/data-doctors-should-i-be-using-microsoft-pc-manager) · [BetaNews review](https://betanews.com/article/microsoft-pc-manager-feels-like-ccleaners-little-brother) · [HotHardware](https://amp.hothardware.com/news/microsoft-pc-manager-could-speed-up-performance-or-slow-it-down)
 - Earlier session research reused: HDOpti site/patch notes; cleaner junction CVEs (ZDI CCleaner/Trend Micro, AdwCleaner CVE-2025-67905); IPv6 guidance; WinUtil docs; Hone/Razer Cortex comparisons.
+
+---
+
+## Addendum (0.10): why users noticed little, and what changed
+
+**Findings**
+- Most preset changes were already Windows 11 defaults: Game Mode is on by default, "Record what happened" is off by default, and HAGS is on by default on supported GPUs. Applying them changes nothing, so nothing can be felt.
+- Transparency and window animations are cosmetic. USB selective suspend and mouse acceleration fix specific problems, not general performance.
+- Game Mode's Balanced profile repeated those defaults, so beyond Windows' own Game Mode it did almost nothing.
+- The old Performance step (High performance plan) is a legacy plan. Windows 11's supported switch is the **power mode** (Best performance), which also exists on Modern Standby laptops that lack the old plans. Power modes only apply on the Balanced plan.
+- On the developer's PC every setting was already optimized (High performance plan, Best performance mode, HAGS on, 165 Hz): a well-configured PC has nothing left to gain from settings, and Kestrel should say so instead of re-applying them.
+- What makes a noticeable difference is fixing a real bottleneck: refresh rate below the monitor's maximum, memory not at rated speed (XMP/EXPO), heavy background apps eating memory, a laptop held back by its power mode, games on a hard drive, or overlays. These are what the health checks and Game Mode now target.
+
+**Changes**
+- Added the Best performance power mode (setting, preset and Game Mode step). It reports "Not needed" when the plan isn't Balanced.
+- Added a Memory in use check that names the largest open apps.
+- Settings already set or without effect are skipped and reported instead of being re-applied, and Optimize PC's result summary is grouped.
+- Windows 11 only.
+
+**Deliberately not changed**
+- Memory integrity / Virtual Machine Platform: Microsoft has said turning these off can help gaming, but they're security features, so Kestrel only reports their state.
+- HAGS: it's required for DLSS Frame Generation and on by default, but benchmarks are mixed (about -5 to +5 %) and changing it needs admin rights and a restart, so the check stays informative.
+- Network "latency tweaks", timer resolution, process priority and service changes: still no credible evidence of benefit.
+
+**Evidence and status**
+- Power mode functions (`PowerGetActualOverlayScheme`, `PowerSetActiveOverlayScheme` in powrprof.dll) are what Settings > Power uses, but they are **not in Microsoft's public documentation**. Kestrel loads them at run time and fails cleanly if they're missing. Tested without admin rights on Windows 11 build 26200.
+- Mode GUIDs (Best performance `ded574b5-…`, Balanced all zeros, Best power efficiency `961cc777-…`) come from community sources and match this PC's registry.
+- Sources: [Optimizations for windowed games in Windows 11](https://support.microsoft.com/en-us/topic/3f006843-2c7e-4ed0-9a5e-f9389e535952) · [PowerSetActiveScheme (documented plan API)](https://learn.microsoft.com/en-us/windows/win32/api/powersetting/nf-powersetting-powersetactivescheme) · [Set-PowerMode script using the overlay API (community)](https://www.powershellgallery.com/packages/ARC/0.0.1/Content/Public%5COS%5CPower%5CSet-PowerMode.ps1) · [Microsoft's VBS/memory integrity gaming guidance, as reported by BetaNews](https://betanews.com/2022/10/07/microsoft-says-that-gamers-can-boost-performance-by-lowering-windows-11-security-settings) · [Pureinfotech summary](https://pureinfotech.com/optimize-gaming-performance-windows-11/) · [HAGS and DLSS Frame Generation (Nixxes)](https://support.nixxes.com/hc/en-us/articles/48432027293971-How-to-use-DLSS-Frame-Generation) · [PCWorld on HAGS](https://www.pcworld.com/article/2339130/should-you-enable-hardware-accelerated-gpu-scheduling-in-windows-11.html)
