@@ -23,7 +23,7 @@ impl App {
         };
         let mut on = gm.on.is_some();
         let mut changed = false;
-        setting_row(ui, i, strong("Game Mode"), &desc, |ui| {
+        setting_row(ui, i, RichText::new("Game Mode").color(TEXT), &desc, |ui| {
             changed = ui.add_enabled_ui(!busy, |ui| toggle(ui, &mut on)).inner.changed();
         });
         if changed {

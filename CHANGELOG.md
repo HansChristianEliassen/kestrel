@@ -1,6 +1,13 @@
 # Changelog
 
 ## Unreleased
+- **Interface polish** (same structure, refined throughout; see DESIGN.md):
+  - **Overview:** Optimize PC is now the one primary panel; Clean up and Game Mode are compact Quick actions, and Clean up shows the space found once you've scanned; Status leads with a summary line ("All 11 checks look fine") with its dot.
+  - **Sidebar:** the Kestrel mark next to the name, pages in three quiet groups, and the current page in semibold.
+  - **Compact, aligned rows:** rows take their text's natural height (two-line rows are about 20 px shorter); on Gaming, each setting's state and Revert sit on its title line; table text centers on its buttons.
+  - **Controls:** one 32 px height for buttons, drop-downs and search boxes; softer filled buttons, a semibold primary button, hairline borders, quieter section labels, and 8 px corners on lists.
+  - **Cleanup:** before the first scan, Scan sits inside the empty panel.
+  - The scrollbar no longer touches the lists' right edge.
 - **Banners:** text no longer runs under the buttons. Banners with several buttons (like "Update available") reserved a fixed 200 px for them; the text now gets exactly the room the buttons leave and wraps. A test renders the update banner off-screen to keep it that way.
 - Settings > About links to the license and the third-party notices, which are now built into the app.
 

@@ -52,12 +52,14 @@ pub fn apply_theme(ctx: &egui::Context) {
     v.widgets.noninteractive.weak_bg_fill = LAYER;
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, DIVIDER);
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, TEXT);
-    // Standard controls; "active" also covers keyboard focus, so its stroke doubles as the focus indicator.
+    // Standard controls: soft filled surfaces with a hairline edge (Windows 11 / Linear style), no heavy outlines.
+    // "active" also covers keyboard focus, so its stroke doubles as the focus indicator.
+    let edge = Stroke::new(1.0_f32, Color32::from_rgb(0x3e, 0x3e, 0x3e));
     for (w, fill, stroke) in [
-        (&mut v.widgets.inactive, Color32::from_rgb(0x2d, 0x2d, 0x2d), Stroke::new(1.0_f32, Color32::from_rgb(0x3d, 0x3d, 0x3d))),
-        (&mut v.widgets.hovered, Color32::from_rgb(0x35, 0x35, 0x35), Stroke::new(1.0_f32, Color32::from_rgb(0x4a, 0x4a, 0x4a))),
-        (&mut v.widgets.active, Color32::from_rgb(0x29, 0x29, 0x29), Stroke::new(1.5_f32, TEXT_2)),
-        (&mut v.widgets.open, Color32::from_rgb(0x2d, 0x2d, 0x2d), Stroke::new(1.0_f32, Color32::from_rgb(0x4a, 0x4a, 0x4a))),
+        (&mut v.widgets.inactive, CONTROL, edge),
+        (&mut v.widgets.hovered, CONTROL_HOVER, Stroke::new(1.0_f32, Color32::from_rgb(0x48, 0x48, 0x48))),
+        (&mut v.widgets.active, Color32::from_rgb(0x2e, 0x2e, 0x2e), Stroke::new(1.5_f32, TEXT_2)),
+        (&mut v.widgets.open, CONTROL_HOVER, Stroke::new(1.0_f32, Color32::from_rgb(0x48, 0x48, 0x48))),
     ] {
         w.bg_fill = fill;
         w.weak_bg_fill = fill;
@@ -66,34 +68,36 @@ pub fn apply_theme(ctx: &egui::Context) {
         w.corner_radius = CornerRadius::same(R_CONTROL);
         w.expansion = 0.0;
     }
+    // Text inputs: slightly darker than the page, hairline edge (egui fades disabled widgets toward the background).
+    v.extreme_bg_color = Color32::from_rgb(0x1b, 0x1b, 0x1b);
     style.spacing.item_spacing = vec2(S2, S2);
-    style.spacing.button_padding = vec2(S3, S1);
-    style.spacing.interact_size = vec2(40.0, 28.0);
-    style.spacing.combo_width = 150.0;
-    style.spacing.scroll = egui::style::ScrollStyle::thin();
+    style.spacing.button_padding = vec2(S3 + 2.0, S1);
+    style.spacing.interact_size = vec2(40.0, CONTROL_H);
+    style.spacing.combo_width = 160.0;
+    let mut scroll = egui::style::ScrollStyle::thin();
+    // Keep the scrollbar off the lists' right edge.
+    scroll.bar_outer_margin = 4.0;
+    style.spacing.scroll = scroll;
     style.animation_time = 0.08;
     ctx.set_style_of(egui::Theme::Dark, style);
 }
 
 fn nav_item(ui: &mut Ui, page: Page, selected: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, page.label()));
     let painter = ui.painter();
     if selected || resp.hovered() {
-        painter.rect_filled(rect, CornerRadius::same(R_CONTROL), if selected { LAYER } else { Color32::from_rgb(0x26, 0x26, 0x26) });
+        painter.rect_filled(rect, CornerRadius::same(R_CONTROL + 2), if selected { LAYER } else { Color32::from_rgb(0x24, 0x24, 0x24) });
     }
     if selected {
-        let pill = egui::Rect::from_center_size(egui::pos2(rect.left() + 1.5, rect.center().y), vec2(3.0, 16.0));
+        let pill = egui::Rect::from_center_size(egui::pos2(rect.left() + 1.5, rect.center().y), vec2(3.0, 14.0));
         painter.rect_filled(pill, CornerRadius::same(2), ACCENT);
     }
-    painter.text(
-        rect.left_center() + vec2(14.0, 0.0),
-        Align2::LEFT_CENTER,
-        page.icon(),
-        icon_font(16.0),
-        if selected { TEXT } else { TEXT_2 },
-    );
-    painter.text(rect.left_center() + vec2(42.0, 0.0), Align2::LEFT_CENTER, page.label(), FontId::proportional(BODY), TEXT);
+    let color = if selected { TEXT } else { TEXT_2 };
+    // Icons in a fixed 16 px box, labels on one baseline.
+    painter.text(egui::pos2(rect.left() + 22.0, rect.center().y), Align2::CENTER_CENTER, page.icon(), icon_font(16.0), color);
+    let font = if selected { semibold(BODY) } else { FontId::proportional(BODY) };
+    painter.text(rect.left_center() + vec2(42.0, 0.0), Align2::LEFT_CENTER, page.label(), font, color);
     if resp.has_focus() {
         painter.rect_stroke(rect.shrink(1.0_f32), CornerRadius::same(R_CONTROL), Stroke::new(2.0_f32, TEXT), egui::StrokeKind::Inside);
     }
@@ -102,14 +106,28 @@ fn nav_item(ui: &mut Ui, page: Page, selected: bool) -> egui::Response {
 
 impl App {
     pub(crate) fn sidebar(&mut self, ui: &mut Ui) {
+        let brand = self
+            .brand
+            .get_or_insert_with(|| {
+                let i = crate::icon();
+                let image = egui::ColorImage::from_rgba_unmultiplied([i.width as usize, i.height as usize], &i.rgba);
+                ui.ctx().load_texture("brand", image, egui::TextureOptions::LINEAR)
+            })
+            .clone();
         ui.horizontal(|ui| {
-            ui.add_space(14.0);
+            ui.add_space(12.0);
+            ui.spacing_mut().item_spacing.x = S2 + 2.0;
+            ui.add(egui::Image::new(&brand).fit_to_exact_size(vec2(20.0, 20.0)));
             ui.label(RichText::new("Kestrel").font(semibold(15.0)).color(TEXT));
         });
-        ui.add_space(S4);
+        ui.add_space(S4 + 2.0);
         ui.spacing_mut().item_spacing.y = 2.0;
         let mut nav = None;
-        for p in Page::ALL.into_iter().filter(|p| *p != Page::Settings) {
+        // Three quiet groups: the overview, the system tools, and the gaming pages.
+        for (i, p) in Page::ALL.into_iter().filter(|p| *p != Page::Settings).enumerate() {
+            if matches!(p, Page::Cleaner | Page::Gaming) && i > 0 {
+                ui.add_space(S3);
+            }
             if nav_item(ui, p, self.page == p).clicked() {
                 nav = Some(p);
             }
@@ -140,29 +158,51 @@ impl App {
         page_header(ui, "Overview", "Clean up, manage apps and tune Windows for games. Nothing changes until you confirm it.");
         let ctx = ui.ctx().clone();
         let (mut optimize, mut scan) = (false, false);
+        // The page's one primary action, on its own panel.
+        egui::Frame::default()
+            .fill(LAYER)
+            .stroke(Stroke::new(1.0_f32, STROKE))
+            .corner_radius(CornerRadius::same(R_GROUP))
+            .inner_margin(egui::Margin { left: 20, right: 16, top: 16, bottom: 16 })
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        ui.label(RichText::new("Optimize PC").font(semibold(16.0)).color(TEXT));
+                        ui.label(
+                            RichText::new("Finds junk files and the gaming settings that would help this PC, then shows every change for you to approve.")
+                                .size(CAPTION + 1.0)
+                                .color(TEXT_2),
+                        );
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        optimize = accent_button(ui, self.opt.stage == OptStage::Closed, "Review changes").clicked();
+                    });
+                });
+            });
+
+        section(ui, "Quick actions", |_| {});
+        let found: u64 = self.cleaner.items.iter().map(|i| i.found.bytes).sum();
+        let cleanup = if self.cleaner.items.is_empty() {
+            "Temporary files, caches and other leftovers. Nothing is deleted until you confirm.".to_string()
+        } else {
+            format!("{} found in the last scan. Nothing is deleted until you confirm.", fmt_bytes(found))
+        };
         group(ui, |ui| {
-            setting_row(
-                ui,
-                0,
-                strong("Optimize PC"),
-                "Finds junk files and recommended gaming settings, then shows every change for you to approve.",
-                |ui| optimize = accent_button(ui, self.opt.stage == OptStage::Closed, "Review changes").clicked(),
-            );
-            setting_row(
-                ui,
-                1,
-                strong("Clean up"),
-                "Temporary files, caches and other leftovers. Nothing is deleted until you confirm.",
-                |ui| scan = button(ui, !self.cleaner.scan.running(), "Scan").clicked(),
-            );
-            self.game_mode_row(ui, 2);
+            setting_row(ui, 0, RichText::new("Clean up").color(TEXT), &cleanup, |ui| {
+                scan = button(ui, !self.cleaner.scan.running(), if self.cleaner.items.is_empty() { "Scan" } else { "Review" }).clicked();
+            });
+            self.game_mode_row(ui, 1);
         });
         if optimize {
             self.start_optimize(&ctx);
         }
         if scan {
             self.go(Page::Cleaner, &ctx);
-            self.start_scan(&ctx);
+            if self.cleaner.items.is_empty() {
+                self.start_scan(&ctx);
+            }
         }
 
         let checking = self.gaming.checks_job.running();
@@ -173,9 +213,6 @@ impl App {
                 progress(ui, "Checking");
             } else {
                 recheck = link(ui, "Check again").clicked();
-                if attention > 0 {
-                    caption(ui, format!("{attention} need attention ·"));
-                }
             }
         });
         if recheck {
@@ -193,7 +230,7 @@ impl App {
             let shown = self.gaming.checks.iter().filter(|c| c.attention || show_all);
             for (i, c) in shown.enumerate() {
                 let lead = if c.attention { Status::Caution } else { Status::Ok };
-                setting_row_note(ui, i, Some(lead), strong(c.title), &c.detail, None, |ui| {
+                setting_row_note(ui, i, Some(lead), RichText::new(c.title).color(TEXT), &c.detail, None, |ui| {
                     if let Some((label, uri)) = c.link {
                         if row_button(ui, true, label).clicked() {
                             open_uri(uri);
@@ -210,10 +247,17 @@ impl App {
             }
             if fine > 0 {
                 let n = if show_all { self.gaming.checks.len() } else { attention };
-                let text = if show_all { "Hide checks that are fine".to_string() } else { format!("{fine} checks look fine") };
+                let text = match (show_all, attention) {
+                    (true, _) => "Hide the checks that are fine".to_string(),
+                    (false, 0) => format!("All {fine} checks look fine"),
+                    (false, _) => format!("{fine} other checks look fine"),
+                };
                 row(ui, n, |ui| {
                     ui.horizontal(|ui| {
-                        secondary(ui, text);
+                        if !show_all {
+                            status(ui, Status::Ok, "");
+                        }
+                        ui.label(RichText::new(text).color(TEXT_2));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             toggle_ok = link(ui, if show_all { "Hide" } else { "Show" }).clicked();
                         });
@@ -243,20 +287,20 @@ impl App {
         let selected: Vec<_> = self.cleaner.items.iter().filter(|i| i.selected).collect();
         let sel_bytes: u64 = selected.iter().map(|i| i.found.bytes).sum();
         let (mut scan, mut clean) = (false, false);
-        ui.horizontal(|ui| {
-            scan =
-                if scanned { button(ui, !scanning && !cleaning, "Scan again") } else { accent_button(ui, !scanning && !cleaning, "Scan") }
-                    .clicked();
-            if scanning || cleaning {
-                progress(ui, if scanning { "Scanning temp folders and caches…" } else { "Cleaning…" });
-            }
-            if scanned {
+        // Before the first scan the Scan button lives in the empty panel below; the toolbar is for results.
+        if scanned || cleaning {
+            ui.horizontal(|ui| {
+                scan = button(ui, !scanning && !cleaning, "Scan again").clicked();
+                if scanning || cleaning {
+                    progress(ui, if scanning { "Scanning temp folders and caches…" } else { "Cleaning…" });
+                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     clean = accent_button(ui, !scanning && !cleaning && !selected.is_empty(), "Clean selected").clicked();
                     secondary(ui, format!("{} selected", fmt_bytes(sel_bytes)));
                 });
-            }
-        });
+            });
+            ui.add_space(S3);
+        }
         if clean {
             let body = selected
                 .iter()
@@ -271,19 +315,17 @@ impl App {
                 action: Action::Clean,
             });
         }
-        if scan {
-            self.start_scan(ui.ctx());
-        }
-        ui.add_space(S3);
         group(ui, |ui| {
             if !scanned {
                 if scanning {
                     row(ui, 0, |ui| progress(ui, "Looking through temp folders and caches…"));
                 } else {
-                    empty_state(
+                    setting_row(
                         ui,
-                        "Nothing scanned yet",
-                        "Scan to see how much space temporary files, caches and other leftovers are using.",
+                        0,
+                        RichText::new("Nothing scanned yet").color(TEXT),
+                        "Scan to see how much space temporary files, caches and other leftovers are using. Scanning only looks.",
+                        |ui| scan = accent_button(ui, true, "Scan").clicked(),
                     );
                 }
                 return;
@@ -337,6 +379,9 @@ impl App {
                 });
             }
         });
+        if scan {
+            self.start_scan(ui.ctx());
+        }
     }
 
     fn large_files_tab(&mut self, ui: &mut Ui) {
@@ -439,7 +484,7 @@ impl App {
         let busy = self.apps.load.running() || self.apps.uninstall.running();
         let mut refresh = false;
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.apps.search).hint_text("Search by name or publisher").desired_width(260.0));
+            search_box(ui, &mut self.apps.search, "Search by name or publisher", 260.0);
             egui::ComboBox::from_id_salt("sort")
                 .selected_text(if self.apps.sort == SortBy::Name { "Sort by name" } else { "Sort by size" })
                 .show_ui(ui, |ui| {
@@ -772,30 +817,17 @@ impl App {
                         g.selected[t.index()] = false;
                     }
                     row(ui, i, |ui| {
+                        // Title line: checkbox and name on the left; state and Revert on the same line, right.
                         ui.horizontal(|ui| {
-                            let left = ui.available_width() - CONTROL_COL;
-                            ui.allocate_ui_with_layout(vec2(left, 0.0), Layout::top_down(Align::Min), |ui| {
-                                ui.set_width(left);
-                                let r = ui
-                                    .add_enabled_ui(unsupported.is_none(), |ui| {
-                                        checkbox(ui, &mut g.selected[t.index()], RichText::new(info.title).color(TEXT))
-                                    })
-                                    .inner;
-                                let r = r.on_hover_text(format!("Benefit: {}", info.benefit));
-                                if r.changed() {
-                                    g.preset = Preset::Custom;
-                                }
-                                ui.horizontal(|ui| {
-                                    ui.add_space(26.0);
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new(unsupported.as_deref().unwrap_or(info.purpose)).size(CAPTION).color(TEXT_2));
-                                        if unsupported.is_none() {
-                                            caption(ui, format!("Trade-off: {}", info.drawback));
-                                        }
-                                    });
-                                });
-                            });
-                            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                            let r = ui
+                                .add_enabled_ui(unsupported.is_none(), |ui| {
+                                    checkbox(ui, &mut g.selected[t.index()], RichText::new(info.title).color(TEXT))
+                                })
+                                .inner;
+                            if r.on_hover_text(format!("Benefit: {}", info.benefit)).changed() {
+                                g.preset = Preset::Custom;
+                            }
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if backup
                                     && row_button(ui, true, "Revert")
                                         .on_hover_text("Put back the value from before Kestrel changed it")
@@ -810,6 +842,17 @@ impl App {
                                     None if applied => status(ui, Status::Ok, "On"),
                                     None => status(ui, Status::Neutral, "Off"),
                                 };
+                            });
+                        });
+                        // Description under the name, kept to a readable width.
+                        ui.horizontal(|ui| {
+                            ui.add_space(26.0);
+                            ui.vertical(|ui| {
+                                ui.set_max_width((ui.available_width() - CONTROL_COL + 60.0).max(240.0));
+                                ui.label(RichText::new(unsupported.as_deref().unwrap_or(info.purpose)).size(CAPTION).color(TEXT_2));
+                                if unsupported.is_none() {
+                                    caption(ui, format!("Trade-off: {}", info.drawback));
+                                }
                             });
                         });
                     });
@@ -853,7 +896,7 @@ impl App {
         let mut add = false;
         let mut refresh = false;
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.gaming.game_search).hint_text("Search games").desired_width(240.0));
+            search_box(ui, &mut self.gaming.game_search, "Search games", 240.0);
             add = button(ui, true, "Add a game…").on_hover_text("Choose any game's .exe file").clicked();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if self.gaming.games_job.running() {

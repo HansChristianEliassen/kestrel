@@ -20,13 +20,17 @@ pub const BG: Color32 = Color32::from_rgb(0x20, 0x20, 0x20);
 /// Navigation pane.
 pub const SIDEBAR: Color32 = Color32::from_rgb(0x1b, 0x1b, 0x1b);
 /// List groups, dialogs, notifications.
-pub const LAYER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x2a);
+pub const LAYER: Color32 = Color32::from_rgb(0x29, 0x29, 0x29);
 pub const LAYER_HOVER: Color32 = Color32::from_rgb(0x32, 0x32, 0x32);
-pub const STROKE: Color32 = Color32::from_rgb(0x3a, 0x3a, 0x3a);
-pub const DIVIDER: Color32 = Color32::from_rgb(0x33, 0x33, 0x33);
+/// Hairline borders: just enough to separate a surface from the page, never a heavy outline.
+pub const STROKE: Color32 = Color32::from_rgb(0x33, 0x33, 0x33);
+pub const DIVIDER: Color32 = Color32::from_rgb(0x30, 0x30, 0x30);
 pub const TEXT: Color32 = Color32::from_rgb(0xee, 0xee, 0xee);
 pub const TEXT_2: Color32 = Color32::from_rgb(0xb0, 0xb0, 0xb0);
-pub const TEXT_3: Color32 = Color32::from_rgb(0x86, 0x86, 0x86);
+pub const TEXT_3: Color32 = Color32::from_rgb(0x8a, 0x8a, 0x8a);
+/// Secondary button fill and hover.
+pub const CONTROL: Color32 = Color32::from_rgb(0x34, 0x34, 0x34);
+pub const CONTROL_HOVER: Color32 = Color32::from_rgb(0x3c, 0x3c, 0x3c);
 /// The single accent: a muted blue, used for the one primary action per screen, selection and "on" states.
 pub const ACCENT: Color32 = Color32::from_rgb(0x4c, 0x8b, 0xe8);
 pub const ACCENT_TEXT: Color32 = Color32::from_rgb(0x8d, 0xb6, 0xf2);
@@ -47,8 +51,10 @@ pub const S3: f32 = 12.0;
 pub const S4: f32 = 16.0;
 pub const S6: f32 = 24.0;
 pub const R_CONTROL: u8 = 4;
-pub const R_GROUP: u8 = 6;
-pub const R_DIALOG: u8 = 8;
+pub const R_GROUP: u8 = 8;
+pub const R_DIALOG: u8 = 10;
+/// Height of buttons, inputs and drop-downs, so a toolbar lines up; compact row buttons are 28.
+pub const CONTROL_H: f32 = 32.0;
 
 /// Width of the right-hand control column in setting rows.
 pub const CONTROL_COL: f32 = 220.0;
@@ -147,19 +153,23 @@ pub fn caption(ui: &mut Ui, text: impl Into<String>) -> Response {
 /// Page title (Subtitle size, semibold) and one line of context.
 pub fn page_header(ui: &mut Ui, title: &str, subtitle: &str) {
     ui.label(RichText::new(title).font(semibold(TITLE)).color(TEXT));
-    ui.add_space(2.0);
-    secondary(ui, subtitle);
+    ui.add_space(S1);
+    ui.label(RichText::new(subtitle).size(BODY - 0.5).color(TEXT_2));
+    // Sections add their own top space, so a page that starts with one doesn't get a double gap.
     ui.add_space(S4);
 }
 
 /// Section heading above a list group; `right` adds actions aligned to the right edge.
+/// Quieter than the page title: secondary color, so the lists, not their labels, carry the page.
 pub fn section(ui: &mut Ui, title: &str, right: impl FnOnce(&mut Ui)) {
-    ui.add_space(S6 - S2);
+    // 24 px above in total: egui's 8 px item spacing plus this.
+    ui.add_space(S4);
     ui.horizontal(|ui| {
-        ui.label(strong(title));
+        ui.add_space(2.0);
+        ui.label(RichText::new(title).font(semibold(BODY - 1.0)).color(TEXT_2));
         ui.with_layout(Layout::right_to_left(Align::Center), right);
     });
-    ui.add_space(S1);
+    ui.add_space(S2 - 2.0);
 }
 
 // ---- Status ---------------------------------------------------------------------------------
@@ -238,18 +248,32 @@ fn add_button(ui: &mut Ui, enabled: bool, b: egui::Button) -> Response {
 
 /// The one primary action on a screen.
 pub fn accent_button(ui: &mut Ui, enabled: bool, text: &str) -> Response {
-    let b = egui::Button::new(RichText::new(text).color(Color32::WHITE)).fill(ACCENT).stroke(Stroke::NONE).min_size(vec2(96.0, 32.0));
+    let b = egui::Button::new(RichText::new(text).font(semibold(BODY)).color(Color32::WHITE))
+        .fill(ACCENT)
+        .stroke(Stroke::NONE)
+        .min_size(vec2(96.0, CONTROL_H));
     add_button(ui, enabled, b)
 }
 
-/// Standard (secondary) button.
+/// Standard (secondary) button: a soft filled surface, no outline (style comes from the theme).
 pub fn button(ui: &mut Ui, enabled: bool, text: &str) -> Response {
-    add_button(ui, enabled, egui::Button::new(text).min_size(vec2(0.0, 32.0)))
+    add_button(ui, enabled, egui::Button::new(text).min_size(vec2(72.0, CONTROL_H)))
 }
 
-/// Compact button for row actions.
+/// Compact button for actions inside list rows.
 pub fn row_button(ui: &mut Ui, enabled: bool, text: &str) -> Response {
-    add_button(ui, enabled, egui::Button::new(RichText::new(text).size(CAPTION + 1.0)).min_size(vec2(0.0, 26.0)))
+    add_button(ui, enabled, egui::Button::new(RichText::new(text).size(CAPTION + 1.0)).min_size(vec2(0.0, 28.0)))
+}
+
+/// Search field, the same height as buttons and drop-downs so toolbars line up.
+pub fn search_box(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Response {
+    ui.add(
+        egui::TextEdit::singleline(text)
+            .hint_text(hint)
+            .desired_width(width)
+            .margin(Margin::symmetric(10, 7))
+            .min_size(vec2(0.0, CONTROL_H)),
+    )
 }
 
 /// Text-only button (hyperlink style) for low-emphasis actions.
@@ -411,10 +435,12 @@ pub fn row<R>(ui: &mut Ui, i: usize, add: impl FnOnce(&mut Ui) -> R) -> R {
         ui.painter().hline(r.left()..=r.right(), r.top(), Stroke::new(1.0_f32, DIVIDER));
     }
     egui::Frame::default()
-        .inner_margin(Margin::symmetric(14, 10))
+        .inner_margin(Margin::symmetric(16, 11))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.spacing_mut().item_spacing.y = 3.0;
+            // Text lines take their natural height; controls set their own (CONTROL_H), so rows stay compact.
+            ui.spacing_mut().interact_size.y = 18.0;
             add(ui)
         })
         .inner
@@ -461,7 +487,11 @@ pub fn setting_row_note(
                     title
                 })
                 .inner;
-            ui.with_layout(Layout::right_to_left(Align::Center), controls);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                // Drop-downs in the control column keep the standard control height.
+                ui.spacing_mut().interact_size.y = CONTROL_H;
+                controls(ui)
+            });
             title
         })
         .inner
@@ -471,7 +501,8 @@ pub fn setting_row_note(
 /// Fixed-width table cell; `right` aligns its content to the right edge.
 pub fn cell<R>(ui: &mut Ui, width: f32, right: bool, add: impl FnOnce(&mut Ui) -> R) -> R {
     let layout = if right { Layout::right_to_left(Align::Center) } else { Layout::left_to_right(Align::Center) };
-    ui.allocate_ui_with_layout(vec2(width, 20.0), layout, |ui| {
+    // As tall as a row button, so text and buttons in a table row share one center line.
+    ui.allocate_ui_with_layout(vec2(width, 28.0), layout, |ui| {
         ui.set_width(width);
         add(ui)
     })
@@ -480,7 +511,7 @@ pub fn cell<R>(ui: &mut Ui, width: f32, right: bool, add: impl FnOnce(&mut Ui) -
 
 /// Column header row for a table inside a group.
 pub fn table_header(ui: &mut Ui, cols: &[(&str, f32, bool)]) {
-    egui::Frame::default().inner_margin(Margin::symmetric(14, 6)).show(ui, |ui| {
+    egui::Frame::default().inner_margin(Margin::symmetric(16, 7)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             for &(name, width, right) in cols {
@@ -646,6 +677,8 @@ mod tests {
         use super::*;
         let text = "Update available: Kestrel 0.11.0. A new version with improvements and fixes is ready to install.";
         let ctx = egui::Context::default();
+        // Same fonts as the app (buttons use the semibold family).
+        install_fonts(&ctx);
         let mut output = None;
         for _ in 0..2 {
             let input =

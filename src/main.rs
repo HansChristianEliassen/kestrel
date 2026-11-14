@@ -20,7 +20,9 @@ fn main() -> eframe::Result {
         return Ok(());
     }
     let relaunched = std::env::args().any(|a| a == system::RELAUNCHED);
-    if !system::claim_single_instance(relaunched) {
+    // Debug screenshot runs (KESTREL_SHOTS) may run next to a normal Kestrel.
+    let shots = cfg!(debug_assertions) && std::env::var_os("KESTREL_SHOTS").is_some();
+    if !shots && !system::claim_single_instance(relaunched) {
         return Ok(());
     }
     let options = eframe::NativeOptions {

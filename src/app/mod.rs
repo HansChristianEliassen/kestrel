@@ -1,3 +1,5 @@
+#[cfg(debug_assertions)]
+mod devshots;
 pub mod state;
 
 use eframe::egui;
@@ -41,6 +43,10 @@ pub struct App {
     update_started: bool,
     /// Start this exe (the freshly installed update) once Kestrel has closed.
     relaunch: Option<std::path::PathBuf>,
+    #[cfg(debug_assertions)]
+    shots: Option<devshots::Shots>,
+    /// The app icon as a texture, for the sidebar (made on first draw).
+    pub(crate) brand: Option<egui::TextureHandle>,
 }
 
 impl App {
@@ -68,6 +74,9 @@ impl App {
             updates: UpdateState::default(),
             update_started: false,
             relaunch: None,
+            #[cfg(debug_assertions)]
+            shots: devshots::Shots::from_env(),
+            brand: None,
         };
         // This launch is the new version (or the update was never installed): the previous exe is no longer needed.
         update::clean_up();
@@ -647,6 +656,8 @@ pub(crate) const NOT_NEEDED: &str = "Not needed: ";
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(debug_assertions)]
+        self.shots_tick(ctx);
         self.tray_tick(ctx);
         self.poll(ctx);
         self.game_mode_tick(ctx);
@@ -675,7 +686,8 @@ impl eframe::App for App {
             .show(ctx, |ui| {
                 // Readable line length on wide windows: content stops growing at 920 px.
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-                    ui.set_max_width(ui.available_width().min(920.0));
+                    // 12 px gutter so the scrollbar never sits on the lists' edge.
+                    ui.set_max_width((ui.available_width() - 12.0).min(920.0));
                     self.update_banner(ui);
                     match self.page {
                         Page::Dashboard => self.dashboard(ui),
