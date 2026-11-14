@@ -4,6 +4,9 @@ A small native Windows 11 cleaner and gaming optimizer written in Rust (egui).
 No services, no telemetry, nothing runs until you click. The only network access is the optional update check
 (asked on first launch, at most once a day, to github.com).
 
+## Download
+Get `kestrel.exe` from the [latest release](https://github.com/HansChristianEliassen/kestrel/releases/latest) and run it; there's no installer. It needs **Windows 11** (64-bit). The exe isn't signed with a Windows code-signing certificate yet, so SmartScreen may warn the first time ("More info" > "Run anyway"). Each release lists the exe's SHA-256 so you can check your download. Releases from 0.10.0 can update themselves, if you turn on update checks.
+
 ## Features
 
 The interface follows a small Windows 11-style design system described in [DESIGN.md](DESIGN.md). The Overview shows the main actions, the Game Mode switch and a health-check status list.
@@ -82,3 +85,8 @@ src/
 ├── bin/kestrel-sign.rs  release signing tool (not shipped)
 └── utils/logging.rs     activity history
 ```
+
+## License
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
+
+Unless you explicitly state otherwise, any contribution you intentionally submit for inclusion in Kestrel, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
