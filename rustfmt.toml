@@ -1,0 +1,3 @@
+# Matches the project's existing line length, so formatting doesn't reflow every file.
+max_width = 140
+use_small_heuristics = "Max"

@@ -1,0 +1,3 @@
+/target
+# Release builds go to GitHub Releases, not the repository.
+/dist

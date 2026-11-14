@@ -1,0 +1,4 @@
+# The minimal GNU toolchain has no libshlwapi.a; let the linker read the system DLL directly.
+# MSVC builds ignore this.
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-LC:/Windows/System32"]
