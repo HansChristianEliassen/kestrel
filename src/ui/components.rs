@@ -221,12 +221,15 @@ pub fn info_bar(ui: &mut Ui, kind: Status, text: &str, actions: impl FnOnce(&mut
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             // Actions first (right to left), then the text gets exactly the width they leave and wraps there,
-            // so it can never run under a button however many actions there are.
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                actions(ui);
-                ui.add_space(S3);
-                ui.allocate_ui_with_layout(vec2(ui.available_width(), 0.0), Layout::top_down(Align::Min), |ui| {
-                    ui.add(egui::Label::new(RichText::new(text).size(BODY).color(TEXT)).wrap());
+            // so it can never run under a button however many actions there are. The horizontal row bounds the
+            // height: a bare right-to-left layout centres in, and fills, all the height it's given (0.12.0 bug).
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    actions(ui);
+                    ui.add_space(S3);
+                    ui.allocate_ui_with_layout(vec2(ui.available_width(), 0.0), Layout::top_down(Align::Min), |ui| {
+                        ui.add(egui::Label::new(RichText::new(text).size(BODY).color(TEXT)).wrap());
+                    });
                 });
             });
         });
@@ -680,19 +683,32 @@ mod tests {
         // Same fonts as the app (buttons use the semibold family).
         install_fonts(&ctx);
         let mut output = None;
+        let (mut with_actions, mut without) = (0.0, 0.0);
         for _ in 0..2 {
+            // A tall panel: a banner must stay as tall as its content, not fill the space it's given (0.12.0 bug).
             let input =
-                egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(630.0, 400.0))), ..Default::default() };
+                egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(630.0, 700.0))), ..Default::default() };
             output = Some(ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    info_bar(ui, Status::Ok, text, |ui| {
-                        link(ui, "Remind me later");
-                        row_button(ui, true, "Release notes");
-                        accent_button(ui, true, "Update now");
-                    });
+                    with_actions = ui
+                        .scope(|ui| {
+                            info_bar(ui, Status::Ok, text, |ui| {
+                                link(ui, "Remind me later");
+                                row_button(ui, true, "Release notes");
+                                accent_button(ui, true, "Update now");
+                            })
+                        })
+                        .response
+                        .rect
+                        .height();
+                    // As in confirmation dialogs: a warning with no actions.
+                    without = ui.scope(|ui| info_bar(ui, Status::Caution, "A short warning.", |_| {})).response.rect.height();
                 });
             }));
         }
+        // Three wrapped lines at this narrow width is ~90 px; the bug filled the whole 700 px panel.
+        assert!(with_actions < 150.0, "banner with buttons is {with_actions} px tall");
+        assert!(without < 60.0, "banner without buttons is {without} px tall");
         let texts: Vec<(String, Rect)> = output
             .unwrap()
             .shapes

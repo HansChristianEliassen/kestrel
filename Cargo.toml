@@ -1,6 +1,6 @@
 [package]
 name = "kestrel"
-version = "0.12.1"
+version = "0.12.2"
 edition = "2021"
 description = "Lightweight Windows cleaner and gaming optimizer"
 license = "PolyForm-Noncommercial-1.0.0"
