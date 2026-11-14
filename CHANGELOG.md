@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0: Interface polish
 - **Interface polish** (same structure, refined throughout; see DESIGN.md):
   - **Overview:** Optimize PC is now the one primary panel; Clean up and Game Mode are compact Quick actions, and Clean up shows the space found once you've scanned; Status leads with a summary line ("All 11 checks look fine") with its dot.
   - **Sidebar:** the Kestrel mark next to the name, pages in three quiet groups, and the current page in semibold.
@@ -9,7 +9,8 @@
   - **Cleanup:** before the first scan, Scan sits inside the empty panel.
   - The scrollbar no longer touches the lists' right edge.
 - **Banners:** text no longer runs under the buttons. Banners with several buttons (like "Update available") reserved a fixed 200 px for them; the text now gets exactly the room the buttons leave and wraps. A test renders the update banner off-screen to keep it that way.
-- Settings > About links to the license and the third-party notices, which are now built into the app.
+- Settings > About links to the license and the third-party notices, which are now built into the app and attached to each release.
+- **License:** Kestrel is now source-available under the PolyForm Noncommercial License 1.0.0 (free for personal and other noncommercial use). Security reports: see SECURITY.md.
 
 ## 0.11.0: Background apps, done reversibly
 Based on the competitor research in [COMPETITORS.md](COMPETITORS.md).
