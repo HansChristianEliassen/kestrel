@@ -4,6 +4,8 @@ A small native Windows 11 cleaner and gaming optimizer written in Rust (egui).
 No services, no telemetry, nothing runs until you click. The only network access is the optional update check
 (asked on first launch, at most once a day, to github.com).
 
+Free for personal and other noncommercial use. Selling it or using it commercially needs the author's permission (see [License](#license)).
+
 ## Download
 Get `kestrel.exe` from the [latest release](https://github.com/HansChristianEliassen/kestrel/releases/latest) and run it; there's no installer. It needs **Windows 11** (64-bit). The exe isn't signed with a Windows code-signing certificate yet, so SmartScreen may warn the first time ("More info" > "Run anyway"). Each release lists the exe's SHA-256 so you can check your download. Releases from 0.10.0 can update themselves, if you turn on update checks.
 
@@ -87,4 +89,10 @@ src/
 ```
 
 ## License
-Licensed under the [MIT license](LICENSE-MIT).
+Kestrel is **source-available**, not open source: you can read, use, change and share the code, but only for noncommercial purposes. It's licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
+
+- **Allowed:** personal use, study, research, hobby projects, and use by charities, schools, public research or health organizations and government bodies. You may share the software and your changes, as long as everyone who gets a copy also gets the license and its `Required Notice:` line.
+- **Not allowed without permission:** selling Kestrel or a modified version, bundling it with a paid product or service, or any other commercial use.
+- **Commercial licence:** contact the author through [GitHub](https://github.com/HansChristianEliassen) to ask.
+
+The libraries Kestrel is built with (egui, windows-rs, winreg and their dependencies) keep their own permissive licenses (MIT, Apache-2.0 and similar).
