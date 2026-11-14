@@ -183,7 +183,15 @@ impl App {
                     }
                 });
             }
-            row(ui, close.len(), |ui| {
+            if close.is_empty() {
+                row(ui, 0, |ui| {
+                    secondary(
+                        ui,
+                        "No apps yet, so efficiency mode and closing apps do nothing. Add the apps you leave open while you play.",
+                    );
+                });
+            }
+            row(ui, close.len().max(1), |ui| {
                 egui::ComboBox::from_id_salt("gm_add_app").selected_text("Add an open app").width(260.0).show_ui(ui, |ui| {
                     // Largest first, so the apps worth quieting or closing are at the top.
                     for (app, bytes) in self.gamemode.apps.iter().filter(|(a, _)| !close.contains(&a.to_lowercase())) {

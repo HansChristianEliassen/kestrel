@@ -238,7 +238,8 @@ impl Config {
     }
 
     pub fn save(&self) -> Result<(), String> {
-        fs::write(data_dir().join("gamemode.txt"), self.to_text()).map_err(|e| format!("Couldn't save Game Mode settings: {e}"))
+        crate::utils::write_atomic(&data_dir().join("gamemode.txt"), self.to_text().as_bytes())
+            .map_err(|e| format!("Couldn't save Game Mode settings: {e}"))
     }
 
     /// The configured game whose executable is running, if any (first match wins).
@@ -306,6 +307,8 @@ pub fn activate(profile: Profile, actions: &[Action], close: &[String], trigger:
                     Err(e) => format!("✖ {}: {e}", a.label()),
                 });
             }
+            // Nothing to act on, so nothing to save or undo either.
+            None if close.is_empty() => lines.push(format!("Skipped {}: your list of background apps is empty", a.label())),
             // Each process's original priority is on disk before anything changes, like the settings above.
             None if a == Action::QuietApps => {
                 let saved = watch::quiet_snapshot(close);

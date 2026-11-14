@@ -135,6 +135,8 @@ const OVERLAYS: &[(&str, &str)] = &[
     ("discord.exe", "Discord (its in-game overlay is on by default)"),
     ("medal.exe", "Medal"),
     ("outplayed.exe", "Outplayed"),
+    ("gamebar.exe", "Xbox Game Bar"),
+    ("gameoverlayui.exe", "Steam overlay"),
 ];
 const BOOSTERS: &[(&str, &str)] = &[
     ("razercortex.exe", "Razer Cortex"),

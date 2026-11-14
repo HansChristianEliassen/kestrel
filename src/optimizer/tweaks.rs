@@ -196,7 +196,8 @@ impl Tweak {
     /// Current state, serialized so it can be written back by `write`.
     pub(crate) fn snapshot(self) -> Result<String, String> {
         Ok(match self {
-            Tweak::PowerMode => overlay::get()?,
+            // Windows keeps one power mode per power source; remember which one this value belongs to.
+            Tweak::PowerMode => format!("{}:{}", overlay::source(), overlay::get()?),
             Tweak::HighPerfPower => active_power_scheme()?,
             Tweak::NoAnimations => get_min_animate()?.to_string(),
             Tweak::NoMouseAccel => get_mouse()?.map(|v| v.to_string()).join(","),
@@ -215,9 +216,17 @@ impl Tweak {
     pub(crate) fn write(self, saved: Option<&str>) -> Result<(), String> {
         match self {
             Tweak::PowerMode => {
-                let guid = saved.unwrap_or(overlay::BEST_PERFORMANCE);
+                let (source, guid) = overlay::split_saved(saved.unwrap_or(overlay::BEST_PERFORMANCE));
                 if !is_guid(guid) {
                     return Err("Saved power mode is invalid.".into());
+                }
+                // Setting it now would overwrite the other source's mode; wait until the PC is back on the saved one.
+                if source.is_some_and(|s| s != overlay::source()) {
+                    return Err(format!(
+                        "This PC was {} since the power mode changed. Kestrel puts it back once it's {} again.",
+                        if source == Some("ac") { "unplugged" } else { "plugged in" },
+                        if source == Some("ac") { "plugged in" } else { "on battery" }
+                    ));
                 }
                 overlay::set(guid)
             }
@@ -408,6 +417,26 @@ mod overlay {
 
     pub const BEST_PERFORMANCE: &str = "ded574b5-45a0-4f42-8737-46345c09c238";
 
+    /// "ac" when plugged in (or unknown, as on desktops), "dc" on battery.
+    pub fn source() -> &'static str {
+        use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+        let mut s = SYSTEM_POWER_STATUS::default();
+        let on_battery = unsafe { GetSystemPowerStatus(&mut s) }.is_ok() && s.ACLineStatus == 0;
+        if on_battery {
+            "dc"
+        } else {
+            "ac"
+        }
+    }
+
+    /// "ac:<guid>" → (Some("ac"), guid). Values saved before 0.12.1 are a bare GUID (source unknown).
+    pub fn split_saved(saved: &str) -> (Option<&str>, &str) {
+        match saved.split_once(':') {
+            Some((s @ ("ac" | "dc"), guid)) => (Some(s), guid),
+            _ => (None, saved),
+        }
+    }
+
     fn proc(name: windows::core::PCSTR) -> Result<unsafe extern "system" fn() -> isize, String> {
         unsafe {
             let dll = LoadLibraryExW(w!("powrprof.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32).map_err(|e| e.message())?;
@@ -477,6 +506,18 @@ fn set_mouse(mut m: [i32; 3]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn power_mode_remembers_source() {
+        let g = overlay::BEST_PERFORMANCE;
+        assert_eq!(overlay::split_saved(&format!("ac:{g}")), (Some("ac"), g));
+        assert_eq!(overlay::split_saved(&format!("dc:{g}")), (Some("dc"), g));
+        // Saved by 0.10–0.12.0: no source, restored as before.
+        assert_eq!(overlay::split_saved(g), (None, g));
+        // A value for the other power source is refused rather than written to the wrong slot.
+        let other = if overlay::source() == "ac" { "dc" } else { "ac" };
+        assert!(Tweak::PowerMode.write(Some(&format!("{other}:{g}"))).unwrap_err().contains("puts it back"));
+    }
 
     #[test]
     fn guid_layout() {

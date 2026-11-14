@@ -39,8 +39,8 @@ pub struct App {
     tucked: bool,
     tucked_seen: bool,
     pub(crate) updates: UpdateState,
-    /// The once-per-launch automatic update check has been considered.
-    update_started: bool,
+    /// When the last automatic update check started (this run).
+    update_tried: Option<std::time::Instant>,
     /// Start this exe (the freshly installed update) once Kestrel has closed.
     relaunch: Option<std::path::PathBuf>,
     #[cfg(debug_assertions)]
@@ -72,7 +72,7 @@ impl App {
             tucked: false,
             tucked_seen: false,
             updates: UpdateState::default(),
-            update_started: false,
+            update_tried: None,
             relaunch: None,
             #[cfg(debug_assertions)]
             shots: devshots::Shots::from_env(),
@@ -661,12 +661,17 @@ impl eframe::App for App {
         self.tray_tick(ctx);
         self.poll(ctx);
         self.game_mode_tick(ctx);
-        // Once per launch, after the window is up: never delays startup, and at most daily.
-        if !self.update_started {
-            self.update_started = true;
-            if self.updates.prefs.check_due(update::now()) {
+        // After the window is up (never delays startup), then whenever the daily check falls due while Kestrel keeps
+        // running (in the tray, for example). A failed check (offline) is retried at most hourly.
+        const RETRY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+        if self.updates.prefs.enabled {
+            let tried_recently = self.update_tried.is_some_and(|t| t.elapsed() < RETRY);
+            if !tried_recently && self.updates.prefs.check_due(update::now()) {
+                self.update_tried = Some(std::time::Instant::now());
                 self.start_update_check(ctx, false);
             }
+            // One frame an hour is enough to notice the check is due; nothing runs in between.
+            ctx.request_repaint_after(RETRY);
         }
         if self.updates.download.running() {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));

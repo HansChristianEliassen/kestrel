@@ -206,7 +206,7 @@ impl Prefs {
             self.last_check,
             self.snooze_until
         );
-        fs::write(Prefs::path(), text).map_err(|e| format!("Couldn't save update settings: {e}"))
+        crate::utils::write_atomic(&Prefs::path(), text.as_bytes()).map_err(|e| format!("Couldn't save update settings: {e}"))
     }
 
     /// An automatic check is allowed and the last successful one is older than a day.

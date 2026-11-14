@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.1: Fixes from the 0.12 audit
+- **Laptop power mode:** Windows keeps one power mode for plugged-in and one for battery. Kestrel now remembers which one it changed, and if the PC was unplugged (or plugged in) since, it waits until it's back on that power source instead of overwriting the other one. Values saved by older versions restore as before.
+- **Safer saves:** your Game Mode setup (games, background apps) and update settings are written atomically, like Kestrel's backups, so a crash or power cut mid-save can't wipe them.
+- **Update checks while Kestrel stays open:** the daily check now also runs when Kestrel has been running for a day (for example in the tray), not only at launch. A failed check is retried at most hourly.
+- **Activity log:** trimmed to its newest 2,000 lines once it passes 1 MB, instead of growing forever.
+- **Empty background-app list:** Game Mode skips efficiency mode and closing apps with a clear note when the list is empty, and the Game Mode page says so.
+- **Overlay check:** now also detects Xbox Game Bar and the Steam overlay.
+
 ## 0.12.0: Interface polish
 - **Interface polish** (same structure, refined throughout; see DESIGN.md):
   - **Overview:** Optimize PC is now the one primary panel; Clean up and Game Mode are compact Quick actions, and Clean up shows the space found once you've scanned; Status leads with a summary line ("All 11 checks look fine") with its dot.

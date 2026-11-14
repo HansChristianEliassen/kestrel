@@ -27,13 +27,10 @@ fn load() -> BTreeMap<String, String> {
 /// Serializes every read-modify-write, since the UI thread and background jobs both change backups.
 static LOCK: Mutex<()> = Mutex::new(());
 
-/// Writes a temporary file and renames it over the old one, so a crash mid-write never loses saved originals.
+/// Atomic, so a crash mid-write never loses saved originals.
 fn save(b: &BTreeMap<String, String>) -> Result<(), String> {
     let text: String = b.iter().map(|(k, v)| format!("{k}\t{v}\n")).collect();
-    let tmp = path().with_extension("tmp");
-    fs::write(&tmp, text)
-        .and_then(|()| fs::rename(&tmp, path()))
-        .map_err(|e| format!("Could not save the backup of the original setting: {e}"))
+    super::write_atomic(&path(), text.as_bytes()).map_err(|e| format!("Could not save the backup of the original setting: {e}"))
 }
 
 /// Everything saved, for showing many statuses without re-reading the file.
