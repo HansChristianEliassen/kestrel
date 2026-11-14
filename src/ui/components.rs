@@ -210,12 +210,14 @@ pub fn info_bar(ui: &mut Ui, kind: Status, text: &str, actions: impl FnOnce(&mut
         .inner_margin(Margin { left: 14, right: 10, top: 8, bottom: 8 })
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                let w = ui.available_width() - 200.0;
-                ui.allocate_ui_with_layout(vec2(w.max(200.0), 0.0), Layout::top_down(Align::Min), |ui| {
-                    ui.label(RichText::new(text).size(BODY).color(TEXT));
+            // Actions first (right to left), then the text gets exactly the width they leave and wraps there,
+            // so it can never run under a button however many actions there are.
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                actions(ui);
+                ui.add_space(S3);
+                ui.allocate_ui_with_layout(vec2(ui.available_width(), 0.0), Layout::top_down(Align::Min), |ui| {
+                    ui.add(egui::Label::new(RichText::new(text).size(BODY).color(TEXT)).wrap());
                 });
-                ui.with_layout(Layout::right_to_left(Align::Center), actions);
             });
         });
     let r = frame.response.rect;
@@ -637,6 +639,45 @@ pub fn toasts(ctx: &egui::Context, list: &mut Vec<Toast>) {
 
 #[cfg(test)]
 mod tests {
+    /// Renders a banner off-screen at the narrowest content width Kestrel allows and checks that its text never
+    /// overlaps its buttons (the 0.10/0.11 update banner did).
+    #[test]
+    fn info_bar_text_never_runs_under_actions() {
+        use super::*;
+        let text = "Update available: Kestrel 0.11.0. A new version with improvements and fixes is ready to install.";
+        let ctx = egui::Context::default();
+        let mut output = None;
+        for _ in 0..2 {
+            let input =
+                egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(630.0, 400.0))), ..Default::default() };
+            output = Some(ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    info_bar(ui, Status::Ok, text, |ui| {
+                        link(ui, "Remind me later");
+                        row_button(ui, true, "Release notes");
+                        accent_button(ui, true, "Update now");
+                    });
+                });
+            }));
+        }
+        let texts: Vec<(String, Rect)> = output
+            .unwrap()
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Text(t) => Some((t.galley.text().to_string(), t.galley.rect.translate(t.pos.to_vec2()))),
+                _ => None,
+            })
+            .collect();
+        let banner = texts.iter().find(|(s, _)| s.starts_with("Update available")).expect("banner text drawn").1;
+        let buttons: Vec<&(String, Rect)> =
+            texts.iter().filter(|(s, _)| ["Remind me later", "Release notes", "Update now"].contains(&s.as_str())).collect();
+        assert_eq!(buttons.len(), 3);
+        for (label, r) in buttons {
+            assert!(!banner.intersects(*r), "banner text overlaps \"{label}\": {banner:?} vs {r:?}");
+        }
+    }
+
     #[test]
     fn bytes() {
         assert_eq!(super::fmt_bytes(512), "512 B");

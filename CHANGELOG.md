@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- **Banners:** text no longer runs under the buttons. Banners with several buttons (like "Update available") reserved a fixed 200 px for them; the text now gets exactly the room the buttons leave and wraps. A test renders the update banner off-screen to keep it that way.
+- Settings > About links to the license and the third-party notices, which are now built into the app.
+
 ## 0.11.0: Background apps, done reversibly
 Based on the competitor research in [COMPETITORS.md](COMPETITORS.md).
 - **Efficiency mode for your background apps (Game Mode):** a new action puts the apps in your list on Windows 11's power-saving scheduling (EcoQoS, the basis of Task Manager's Efficiency mode) and below-normal priority while you play. They keep running, nothing is closed, and the original priority comes back when Game Mode ends (or at the next start after a crash). It replaces closing apps in the Performance profile; closing is still available under Custom.

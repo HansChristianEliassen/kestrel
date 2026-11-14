@@ -75,7 +75,7 @@ impl App {
                 t => format!("Downloading Kestrel {}… {} of {}", release.version, fmt_bytes(done), fmt_bytes(t)),
             }
         } else {
-            format!("Update available: Kestrel {}. A new version with improvements and fixes is ready to install.", release.version)
+            format!("Update available: Kestrel {}, with improvements and fixes.", release.version)
         };
         info_bar(ui, Status::Ok, &text, |ui| {
             if !downloading {
