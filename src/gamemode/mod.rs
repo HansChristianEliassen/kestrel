@@ -39,7 +39,9 @@ impl Profile {
             Profile::Balanced => {
                 "Makes sure Windows Game Mode is on, pauses background recording and switches to the Best performance power mode."
             }
-            Profile::Performance => "Adds keeping USB devices awake and closing the apps in your list, which frees memory for the game.",
+            Profile::Performance => {
+                "Adds keeping USB devices awake and putting the apps in your list in efficiency mode, so they leave CPU time for the game."
+            }
             Profile::Custom => "Only the actions you tick below.",
         }
     }
@@ -61,7 +63,8 @@ impl Profile {
         match self {
             Profile::Balanced => vec![Action::WindowsGameMode, Action::RecordingOff, Action::PowerMode],
             // The High performance plan stays Custom-only: power mode is Windows 11's supported switch.
-            Profile::Performance => Action::ALL.into_iter().filter(|a| *a != Action::HighPerformance).collect(),
+            // Closing apps stays Custom-only too: efficiency mode does the reversible version of the same job.
+            Profile::Performance => Action::ALL.into_iter().filter(|a| !matches!(a, Action::HighPerformance | Action::CloseApps)).collect(),
             Profile::Custom => Action::ALL.into_iter().filter(|a| config.custom.contains(a)).collect(),
         }
     }
@@ -74,15 +77,23 @@ pub enum Action {
     PowerMode,
     HighPerformance,
     UsbAwake,
+    QuietApps,
     CloseApps,
 }
 
 impl Action {
     /// Order matters: the power plan switches before the per-plan USB setting, and restore runs in reverse.
-    pub const ALL: [Action; 6] =
-        [Action::WindowsGameMode, Action::RecordingOff, Action::PowerMode, Action::HighPerformance, Action::UsbAwake, Action::CloseApps];
+    pub const ALL: [Action; 7] = [
+        Action::WindowsGameMode,
+        Action::RecordingOff,
+        Action::PowerMode,
+        Action::HighPerformance,
+        Action::UsbAwake,
+        Action::QuietApps,
+        Action::CloseApps,
+    ];
 
-    /// The reversible setting behind this action (all but closing apps).
+    /// The reversible setting behind this action (not the two that act on your app list).
     fn tweak(self) -> Option<Tweak> {
         match self {
             Action::WindowsGameMode => Some(Tweak::GameMode),
@@ -90,7 +101,7 @@ impl Action {
             Action::PowerMode => Some(Tweak::PowerMode),
             Action::HighPerformance => Some(Tweak::HighPerfPower),
             Action::UsbAwake => Some(Tweak::UsbSuspendOff),
-            Action::CloseApps => None,
+            Action::QuietApps | Action::CloseApps => None,
         }
     }
 
@@ -101,6 +112,7 @@ impl Action {
             Action::PowerMode => "Best performance power mode",
             Action::HighPerformance => "High performance power plan",
             Action::UsbAwake => "Keep USB devices awake",
+            Action::QuietApps => "Put the apps in your list in efficiency mode",
             Action::CloseApps => "Close the apps in your list",
         }
     }
@@ -112,6 +124,7 @@ impl Action {
             Action::PowerMode => "Switches Windows 11's power mode to Best performance while you play, so the CPU boosts sooner. Most useful on laptops; skipped when your power plan isn't Balanced.",
             Action::HighPerformance => "Keeps the CPU at higher clock speeds while you play. Your previous power plan comes back afterwards.",
             Action::UsbAwake => "Turns off USB selective suspend for the session, avoiding wake-up delays on controllers and headsets.",
+            Action::QuietApps => "Uses Windows 11's power-saving scheduling (EcoQoS, the basis of Task Manager's Efficiency mode) and below-normal priority: the apps keep running but leave more CPU time for the game. Gentler than Task Manager's version, so voice chat and music keep up. Undone when Game Mode ends.",
             Action::CloseApps => "Politely asks each app in your list to close, like clicking its X. Nothing is force-closed, so apps with unsaved work can still ask you to save.",
         }
     }
@@ -133,6 +146,7 @@ impl Action {
             Action::PowerMode => "power_mode",
             Action::HighPerformance => "high_performance",
             Action::UsbAwake => "usb_awake",
+            Action::QuietApps => "quiet_apps",
             Action::CloseApps => "close_apps",
         }
     }
@@ -292,6 +306,14 @@ pub fn activate(profile: Profile, actions: &[Action], close: &[String], trigger:
                     Err(e) => format!("✖ {}: {e}", a.label()),
                 });
             }
+            // Each process's original priority is on disk before anything changes, like the settings above.
+            None if a == Action::QuietApps => {
+                let saved = watch::quiet_snapshot(close);
+                match append_session(&format!("undo\t{}\t{saved}", a.key())) {
+                    Ok(()) => lines.extend(watch::quiet(&saved, close)),
+                    Err(e) => lines.push(format!("✖ {}: {e}", a.label())),
+                }
+            }
             None => lines.extend(watch::close_apps(close)),
         }
     }
@@ -320,6 +342,10 @@ pub fn restore() -> (Vec<String>, bool) {
     let mut lines = Vec::new();
     let mut failed = Vec::new();
     for (action, original) in parse_session(&text).into_iter().rev() {
+        if action == Action::QuietApps {
+            lines.push(format!("✔ {}", watch::unquiet(&original)));
+            continue;
+        }
         let Some(t) = action.tweak() else { continue };
         match t.write(Some(&original)) {
             Ok(()) => lines.push(format!("✔ Restored: {}", action.label())),

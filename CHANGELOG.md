@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0: Background apps, done reversibly
+Based on the competitor research in [COMPETITORS.md](COMPETITORS.md).
+- **Efficiency mode for your background apps (Game Mode):** a new action puts the apps in your list on Windows 11's power-saving scheduling (EcoQoS, the basis of Task Manager's Efficiency mode) and below-normal priority while you play. They keep running, nothing is closed, and the original priority comes back when Game Mode ends (or at the next start after a crash). It replaces closing apps in the Performance profile; closing is still available under Custom.
+- **Memory use in the app picker:** Game Mode's "Background apps" list shows open apps sorted by memory, with sizes, so the heavy ones are easy to spot.
+- Researched and rejected: timer resolution changes, killing processes and "RAM cleaning", stopping services, automatic debloating, editing game config files, and local "ping" tweaks. See COMPETITORS.md for the evidence.
+
 ## 0.10.0: Windows 11 performance and signed updates
 **Windows 11 only from now on.** On older Windows, Kestrel says so at start.
 

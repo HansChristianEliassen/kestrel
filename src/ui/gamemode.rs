@@ -168,9 +168,9 @@ impl App {
         }
 
         let mut reload_apps = false;
-        section(ui, "Apps to close", |ui| reload_apps = link(ui, "Refresh list").clicked());
+        section(ui, "Background apps", |ui| reload_apps = link(ui, "Refresh list").clicked());
         if reload_apps {
-            self.gamemode.apps = watch::windowed_apps();
+            self.gamemode.apps = self.gamemode.background_apps();
         }
         let mut remove_app = None;
         let mut add_app = None;
@@ -184,17 +184,22 @@ impl App {
                 });
             }
             row(ui, close.len(), |ui| {
-                egui::ComboBox::from_id_salt("gm_add_app").selected_text("Add an open app").width(220.0).show_ui(ui, |ui| {
-                    for app in self.gamemode.apps.iter().filter(|a| !close.contains(a)) {
-                        if ui.selectable_label(false, app).clicked() {
-                            add_app = Some(app.clone());
+                egui::ComboBox::from_id_salt("gm_add_app").selected_text("Add an open app").width(260.0).show_ui(ui, |ui| {
+                    // Largest first, so the apps worth quieting or closing are at the top.
+                    for (app, bytes) in self.gamemode.apps.iter().filter(|(a, _)| !close.contains(&a.to_lowercase())) {
+                        let label = if *bytes > 0 { format!("{app}  ·  {}", fmt_bytes(*bytes)) } else { app.clone() };
+                        if ui.selectable_label(false, label).clicked() {
+                            add_app = Some(app.to_lowercase());
                         }
                     }
                 });
             });
         });
         ui.add_space(S2);
-        caption(ui, "Used by \"Close the apps in your list\". Windows components, security software and anti-cheat can't be added.");
+        caption(
+            ui,
+            "Used by \"Put the apps in your list in efficiency mode\" (reversible; the apps keep running) and \"Close the apps in your list\". Sorted by memory use. Windows components, security software and anti-cheat can't be added.",
+        );
         if let Some(i) = remove_app {
             self.gamemode.config.close.remove(i);
             save = true;

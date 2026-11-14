@@ -1,6 +1,6 @@
-﻿[package]
+[package]
 name = "kestrel"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
 description = "Lightweight Windows cleaner and gaming optimizer"
 # The updater reads this to find GitHub releases.

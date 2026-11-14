@@ -326,6 +326,7 @@ fn memory_in_use() -> Check {
     let games: Vec<String> = crate::gamemode::Config::load().games.iter().map(|g| g.file_name()).collect();
     let top: Vec<String> = crate::gamemode::watch::app_memory(&games)
         .into_iter()
+        .filter(|(_, bytes)| *bytes > 0)
         .take(4)
         .map(|(name, bytes)| format!("{} {}", name.trim_end_matches(".exe"), fmt_bytes(bytes)))
         .collect();

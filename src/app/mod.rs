@@ -259,7 +259,7 @@ impl App {
                 if self.gaming.games.is_empty() {
                     self.load_games(ctx);
                 }
-                self.gamemode.apps = gamemode::watch::windowed_apps();
+                self.gamemode.apps = self.gamemode.background_apps();
             }
             Page::Settings => self.history = read_history(),
             _ => {}

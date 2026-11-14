@@ -237,7 +237,16 @@ pub struct GameModeState {
     /// Turned off by hand while a game was running: don't turn it back on until that game closes.
     pub suppressed: bool,
     pub last_check: std::time::Instant,
-    pub apps: Vec<String>,
+    /// Open apps for the background-app picker, with memory use, largest first.
+    pub apps: Vec<(String, u64)>,
+}
+
+impl GameModeState {
+    /// Open apps by memory use, leaving out the games in the Game Mode list (never opened).
+    pub fn background_apps(&self) -> Vec<(String, u64)> {
+        let games: Vec<String> = self.config.games.iter().map(|g| g.file_name()).collect();
+        gamemode::watch::app_memory(&games)
+    }
 }
 
 impl Default for GameModeState {

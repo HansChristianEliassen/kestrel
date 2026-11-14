@@ -5,6 +5,7 @@
 //! a list kept by Windows and never opens a process, so anti-cheat software has nothing to object to.
 
 use std::collections::HashSet;
+use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
@@ -113,6 +114,138 @@ pub fn windowed_apps() -> Vec<String> {
     apps
 }
 
+/// One process put in efficiency mode: what's needed to identify it again and undo the change.
+struct Quieted {
+    pid: u32,
+    /// Process start time, so a process ID Windows has since reused is never touched.
+    created: u64,
+    priority: u32,
+    name: String,
+}
+
+fn parse_quieted(saved: &str) -> Vec<Quieted> {
+    saved
+        .split(';')
+        .filter_map(|e| {
+            let mut f = e.splitn(4, ':');
+            Some(Quieted {
+                pid: f.next()?.parse().ok()?,
+                created: f.next()?.parse().ok()?,
+                priority: f.next()?.parse().ok()?,
+                name: f.next()?.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn open_for_priority(pid: u32) -> Option<windows::Win32::Foundation::HANDLE> {
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION};
+    unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_INFORMATION, false, pid) }.ok()
+}
+
+fn created(h: windows::Win32::Foundation::HANDLE) -> Option<u64> {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::GetProcessTimes;
+    let (mut c, mut e, mut k, mut u) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+    unsafe { GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u) }.ok()?;
+    Some((u64::from(c.dwHighDateTime) << 32) | u64::from(c.dwLowDateTime))
+}
+
+/// Windows' EcoQoS switch: `on` asks for power-saving scheduling, otherwise Windows decides again.
+fn set_ecoqos(h: windows::Win32::Foundation::HANDLE, on: bool) -> bool {
+    use windows::Win32::System::Threading::{
+        ProcessPowerThrottling, SetProcessInformation, PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+        PROCESS_POWER_THROTTLING_STATE,
+    };
+    let mask = if on { PROCESS_POWER_THROTTLING_EXECUTION_SPEED } else { 0 };
+    let state = PROCESS_POWER_THROTTLING_STATE { Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION, ControlMask: mask, StateMask: mask };
+    unsafe {
+        SetProcessInformation(
+            h,
+            ProcessPowerThrottling,
+            &state as *const _ as *const c_void,
+            std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+        )
+    }
+    .is_ok()
+}
+
+/// What to save before quieting the listed apps: one entry per running process ("pid:created:priority:name").
+pub fn quiet_snapshot(names: &[String]) -> String {
+    use windows::Win32::System::Threading::GetPriorityClass;
+    let mut entries = Vec::new();
+    for (pid, name) in process_list() {
+        if !names.contains(&name.to_lowercase()) || protected(&name).is_some() || name.contains([':', ';']) {
+            continue;
+        }
+        let Some(h) = open_for_priority(pid) else { continue };
+        if let Some(created) = created(h) {
+            let priority = unsafe { GetPriorityClass(h) };
+            if priority != 0 {
+                entries.push(format!("{pid}:{created}:{priority}:{name}"));
+            }
+        }
+        let _ = unsafe { windows::Win32::Foundation::CloseHandle(h) };
+    }
+    entries.join(";")
+}
+
+/// Windows 11 efficiency mode (as in Task Manager, but with below-normal rather than idle priority, so voice
+/// chat and music keep up): the apps keep running with less CPU time and power-saving scheduling.
+pub fn quiet(saved: &str, names: &[String]) -> Vec<String> {
+    use windows::Win32::System::Threading::{SetPriorityClass, BELOW_NORMAL_PRIORITY_CLASS};
+    if names.is_empty() {
+        return vec!["Your list of background apps is empty.".into()];
+    }
+    let mut done: Vec<String> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+    for q in parse_quieted(saved) {
+        let ok = open_for_priority(q.pid).is_some_and(|h| {
+            let ok =
+                created(h) == Some(q.created) && unsafe { SetPriorityClass(h, BELOW_NORMAL_PRIORITY_CLASS) }.is_ok() && set_ecoqos(h, true);
+            let _ = unsafe { windows::Win32::Foundation::CloseHandle(h) };
+            ok
+        });
+        let list = if ok { &mut done } else { &mut failed };
+        if !list.contains(&q.name) {
+            list.push(q.name);
+        }
+    }
+    let mut lines = Vec::new();
+    if !done.is_empty() {
+        lines.push(format!("✔ Efficiency mode: {}", done.join(", ")));
+    }
+    if !failed.is_empty() {
+        lines.push(format!("✖ Couldn't put {} in efficiency mode (it may run as administrator).", failed.join(", ")));
+    }
+    if done.is_empty() && failed.is_empty() {
+        lines.push("None of the apps in your list were running.".into());
+    }
+    lines
+}
+
+/// Puts back the saved priority and lets Windows manage scheduling again. Processes that have since closed
+/// (or whose ID now belongs to another program) are skipped, so this never fails.
+pub fn unquiet(saved: &str) -> String {
+    use windows::Win32::System::Threading::{SetPriorityClass, PROCESS_CREATION_FLAGS};
+    let mut names: Vec<String> = Vec::new();
+    for q in parse_quieted(saved) {
+        let Some(h) = open_for_priority(q.pid) else { continue };
+        if created(h) == Some(q.created) {
+            let _ = unsafe { SetPriorityClass(h, PROCESS_CREATION_FLAGS(q.priority)) };
+            set_ecoqos(h, false);
+            if !names.contains(&q.name) {
+                names.push(q.name);
+            }
+        }
+        let _ = unsafe { windows::Win32::Foundation::CloseHandle(h) };
+    }
+    match names.len() {
+        0 => "Background apps had already closed; nothing to restore.".into(),
+        _ => format!("Normal priority again: {}", names.join(", ")),
+    }
+}
+
 /// Memory used by each program that has a window (all its processes added up), largest first.
 /// Only asks for limited query rights, and skips protected programs and the configured games, so a game and its
 /// anti-cheat are never opened.
@@ -120,7 +253,9 @@ pub fn app_memory(skip: &[String]) -> Vec<(String, u64)> {
     use windows::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     let apps = windowed_apps();
-    let mut totals: std::collections::HashMap<String, u64> = Default::default();
+    // Every app is listed, at 0 when its memory can't be read (for example one running as administrator).
+    let mut totals: std::collections::HashMap<String, u64> =
+        apps.iter().filter(|a| !skip.contains(&a.to_lowercase())).map(|a| (a.clone(), 0)).collect();
     for (pid, name) in process_list() {
         if !apps.contains(&name) || skip.contains(&name.to_lowercase()) {
             continue;
@@ -213,7 +348,36 @@ pub fn take_change() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::protected;
+    use super::*;
+
+    #[test]
+    fn quieted_entries() {
+        let q = parse_quieted("12:133000:32:discord.exe;bad;7:1:16384:chrome.exe");
+        assert_eq!(q.len(), 2);
+        assert_eq!((q[0].pid, q[0].created, q[0].priority, q[0].name.as_str()), (12, 133000, 32, "discord.exe"));
+        assert_eq!(q[1].name, "chrome.exe");
+        assert!(parse_quieted("").is_empty());
+    }
+
+    /// Efficiency mode on and off for a real process this test starts: `cargo test live_quiet -- --ignored`.
+    #[test]
+    #[ignore]
+    fn live_quiet_round_trip() {
+        use windows::Win32::System::Threading::GetPriorityClass;
+        let mut child = std::process::Command::new("charmap.exe").spawn().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        let names = vec!["charmap.exe".to_string()];
+        let saved = quiet_snapshot(&names);
+        println!("saved: {saved}");
+        let prio = |pid: u32| open_for_priority(pid).map(|h| unsafe { GetPriorityClass(h) });
+        println!("quiet: {:?}", quiet(&saved, &names));
+        let first = &parse_quieted(&saved)[0];
+        assert_eq!(prio(first.pid), Some(0x4000), "below normal while quiet");
+        println!("{}", unquiet(&saved));
+        assert_eq!(prio(first.pid), Some(first.priority), "original priority back");
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 
     #[test]
     fn protects_essentials() {
