@@ -3,7 +3,7 @@ name = "kestrel"
 version = "0.11.0"
 edition = "2021"
 description = "Lightweight Windows cleaner and gaming optimizer"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 # The updater reads this to find GitHub releases.
 repository = "https://github.com/HansChristianEliassen/kestrel"
 default-run = "kestrel"
