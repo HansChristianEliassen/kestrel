@@ -78,14 +78,14 @@ pub fn latest() -> Result<Option<Release>, String> {
     Ok(is_newer(version, CURRENT).then(|| Release { version: version.to_string(), tag: tag.to_string() }))
 }
 
-/// Checks a signature file against the built-in key; returns the signed SHA-256 (hex) of the exe.
-fn verify_signature(text: &str, version: &str) -> Result<String, String> {
+/// Checks a signature file against key_hex (the built-in key in real use); returns the signed SHA-256 (hex) of the exe.
+fn verify_signature(text: &str, version: &str, key_hex: &str) -> Result<String, String> {
     let field = |name: &str| text.lines().find_map(|l| l.strip_prefix(name)?.strip_prefix('=')).map(str::trim);
     let (Some(signed_version), Some(sha), Some(sig)) = (field("version"), field("sha256"), field("signature")) else {
         return Err("The update's signature file is incomplete.".into());
     };
     let sig = crypto::unhex(sig).ok_or("The update's signature is malformed.")?;
-    let key = crypto::unhex(PUBLIC_KEY).ok_or("Built-in key is malformed.")?;
+    let key = crypto::unhex(key_hex).ok_or("Built-in key is malformed.")?;
     if !crypto::verify(&key, crypto::message(signed_version, sha).as_bytes(), &sig) {
         return Err("The update's signature is not valid, so it was not installed.".into());
     }
@@ -96,6 +96,14 @@ fn verify_signature(text: &str, version: &str) -> Result<String, String> {
         return Err("The update isn't newer than this version, so it was not installed.".into());
     }
     Ok(sha.to_ascii_lowercase())
+}
+
+/// A 64-bit Windows program: "MZ" header pointing to a "PE" header for x86-64, and a plausible size.
+fn looks_like_exe(data: &[u8]) -> bool {
+    let pe = data.get(0x3c..0x40).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
+    data.len() >= 512 * 1024
+        && data.starts_with(b"MZ")
+        && pe.and_then(|o| data.get(o..o + 6)).is_some_and(|h| h[..4] == *b"PE\0\0" && h[4..6] == [0x64, 0x86])
 }
 
 fn sibling(exe: &Path, suffix: &str) -> PathBuf {
@@ -114,10 +122,14 @@ pub fn download(release: &Release, done: &AtomicU64, total: &AtomicU64) -> Resul
             e
         }
     })?;
-    let sha = verify_signature(&String::from_utf8_lossy(&sig), &release.version)?;
+    let sha = verify_signature(&String::from_utf8_lossy(&sig), &release.version, PUBLIC_KEY)?;
     let exe = http::download(&format!("{base}/{ASSET}"), MAX_EXE, done, total)?;
     if crypto::hex(&crypto::sha256(&exe)?) != sha {
         return Err("The downloaded file doesn't match the signed release, so it was not installed.".into());
+    }
+    // Defence in depth: whatever was signed, only a real Windows program may replace kestrel.exe.
+    if !looks_like_exe(&exe) {
+        return Err("The update isn't a Windows program, so it was not installed.".into());
     }
     let target = std::env::current_exe().map_err(|e| e.to_string())?;
     let staged = sibling(&target, ".new");
@@ -236,15 +248,44 @@ mod tests {
         assert_eq!(Prefs::parse(""), Prefs::default());
     }
 
+    /// A throwaway test key (its private half was deleted after signing SAMPLE). Never sign test data with the
+    /// release key: a valid release-key signature in the repository would be a ready-made forged update.
+    const TEST_KEY: &str = "454353312000000085a5520545e1ad96df908cfc99a09e7675ea13f0bed582319c28a40ebd6052b3bb293d66f5849bf50866a56f1a60384c28e5fd3677a86fed4c11c75aaa9f9ee0";
+    /// `kestrel-sign sign` with TEST_KEY over the bytes "kestrel signature test".
+    const SAMPLE: &str = "kestrel-update\nversion=99.0.0\nsha256=66b5ca02cc3ff60dfb5452b8162bfdd61839caae6e8ae06c464f1feb90ab896b\nsignature=b0f25d497cdcb4fcc2e2fe5381ae72bfe8f4b3374e21eede4a8fd4d158d1e63c017c24ea911914f10a8f44d9edf055aadf344e28c9ba2bfba97c6280b8bcef15\n";
+
+    #[test]
+    fn accepts_signature_only_as_signed() {
+        let sha = verify_signature(SAMPLE, "99.0.0", TEST_KEY).unwrap();
+        assert_eq!(sha, crypto::hex(&crypto::sha256(b"kestrel signature test").unwrap()));
+        // Same signature presented for another version: refused.
+        assert!(verify_signature(SAMPLE, "99.0.1", TEST_KEY).is_err());
+        // Any change to the signed text breaks it.
+        let other = SAMPLE.replace("version=99.0.0", "version=99.0.1");
+        assert!(verify_signature(&other, "99.0.1", TEST_KEY).unwrap_err().contains("not valid"));
+        assert!(verify_signature(&SAMPLE.replace("66b5", "66b6"), "99.0.0", TEST_KEY).unwrap_err().contains("not valid"));
+        // A signature from any other key, the real release key included, is refused.
+        assert!(verify_signature(SAMPLE, "99.0.0", PUBLIC_KEY).unwrap_err().contains("not valid"));
+    }
+
     #[test]
     fn rejects_bad_signatures() {
         let sha = "ab".repeat(32);
         // Valid layout but not signed by the release key.
         let forged = format!("{}signature={}\n", crypto::message("99.0.0", &sha), "11".repeat(64));
-        assert!(verify_signature(&forged, "99.0.0").unwrap_err().contains("not valid"));
-        assert!(verify_signature("version=99.0.0\n", "99.0.0").unwrap_err().contains("incomplete"));
+        assert!(verify_signature(&forged, "99.0.0", PUBLIC_KEY).unwrap_err().contains("not valid"));
+        assert!(verify_signature("version=99.0.0\n", "99.0.0", PUBLIC_KEY).unwrap_err().contains("incomplete"));
         let bad_hex = format!("{}signature=zz\n", crypto::message("99.0.0", &sha));
-        assert!(verify_signature(&bad_hex, "99.0.0").unwrap_err().contains("malformed"));
+        assert!(verify_signature(&bad_hex, "99.0.0", PUBLIC_KEY).unwrap_err().contains("malformed"));
+        assert_eq!(crypto::unhex(PUBLIC_KEY).map(|k| k.len()), Some(72), "release key is a P-256 public blob");
+    }
+
+    #[test]
+    fn only_real_programs_replace_kestrel() {
+        assert!(!looks_like_exe(b"kestrel signature test"));
+        assert!(!looks_like_exe(&vec![0u8; 1 << 20]));
+        let me = fs::read(std::env::current_exe().unwrap()).unwrap();
+        assert!(looks_like_exe(&me), "the running test binary is a real x64 program");
     }
 
     /// Real network: `cargo test live_update -- --ignored --nocapture`.

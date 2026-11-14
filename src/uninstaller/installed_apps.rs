@@ -36,7 +36,7 @@ pub struct InstalledApp {
     pub source: AppSource,
     pub optional: bool,
     pub protected: Option<&'static str>,
-    /// Other software (editors, scripts, Claude Code's Bash tool for Git) may depend on it.
+    /// Other software (editors, build scripts, command-line tools) may depend on it.
     pub developer: bool,
 }
 

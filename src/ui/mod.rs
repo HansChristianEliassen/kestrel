@@ -388,7 +388,7 @@ fn uninstall_confirm(apps: Vec<InstalledApp>) -> Confirm {
     let dev: Vec<&str> = apps.iter().filter(|a| a.developer).map(|a| a.name.as_str()).collect();
     let warning = (!dev.is_empty()).then(|| {
         format!(
-            "{} {} a developer tool. Editors, build scripts and other programs (for Git, also Claude Code's Bash tool) may stop working without it.",
+            "{} {} a developer tool. Editors, build scripts and other programs that rely on it may stop working without it.",
             dev.join(", "),
             if dev.len() == 1 { "is" } else { "are" }
         )

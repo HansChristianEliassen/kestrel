@@ -1,3 +1,21 @@
 /target
 # Release builds go to GitHub Releases, not the repository.
 /dist
+
+# Never commit signing keys, certificates or secrets (the release key lives in %USERPROFILE%\.kestrel).
+*.key
+*.pem
+*.pfx
+*.p12
+.env
+.env.*
+
+# Local logs, editor and OS clutter.
+*.log
+*.tmp
+*.bak
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
