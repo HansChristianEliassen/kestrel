@@ -61,8 +61,8 @@ Opt-in (asked once on first launch; Settings > Updates). Kestrel follows `<repos
 
 ## Releasing
 1. Bump `version` in Cargo.toml and add a CHANGELOG entry.
-2. `powershell -File scripts\release.ps1`: runs fmt/clippy/tests, builds, signs with `%USERPROFILE%\.kestrel\release-signing.key` and writes `dist\v<version>\kestrel.exe` + `kestrel-update.sig`.
-3. Tag `v<version>`, push the tag, create the GitHub release and attach **both** files.
+2. `powershell -File scripts\release.ps1`: checks that `THIRD-PARTY-NOTICES.txt` is current (regenerate it with `scripts\third-party-notices.ps1` after changing dependencies, then commit it), runs fmt/clippy/tests, builds, signs with `%USERPROFILE%\.kestrel\release-signing.key` and writes `dist\v<version>\kestrel.exe`, `kestrel-update.sig` and `THIRD-PARTY-NOTICES.txt`.
+3. Tag `v<version>`, push the tag, create the GitHub release and attach **all three** files.
 
 The signing key never goes into the repository or CI. Back it up somewhere safe: without it no further update can be signed, and users would have to install the next version by hand once (with a new key built in). Releases without `kestrel-update.sig` (such as 0.9.0) can't be installed automatically.
 
@@ -95,4 +95,4 @@ Kestrel is **source-available**, not open source: you can read, use, change and 
 - **Not allowed without permission:** selling Kestrel or a modified version, bundling it with a paid product or service, or any other commercial use.
 - **Commercial licence:** contact the author through [GitHub](https://github.com/HansChristianEliassen) to ask.
 
-The libraries Kestrel is built with (egui, windows-rs, winreg and their dependencies) keep their own permissive licenses (MIT, Apache-2.0 and similar).
+The libraries Kestrel is built with (egui, windows-rs, winreg and their dependencies) keep their own permissive licenses (MIT, Apache-2.0 and similar). Their notices are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), which is also built into the app (Settings > About > Third-party notices) and attached to each release. Security problems: see [SECURITY.md](SECURITY.md).

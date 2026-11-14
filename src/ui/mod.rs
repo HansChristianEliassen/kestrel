@@ -18,6 +18,9 @@ use crate::system::{open_uri, pick_exe, relaunch_as_admin, show_in_folder};
 use crate::uninstaller::{AppSource, InstalledApp};
 use crate::utils::{data_dir, logging::read_history};
 pub use components::fmt_bytes;
+
+/// Licenses of the libraries compiled into Kestrel (regenerate with scripts/third-party-notices.ps1).
+const THIRD_PARTY_NOTICES: &str = include_str!("../../THIRD-PARTY-NOTICES.txt");
 use components::*;
 
 pub fn apply_theme(ctx: &egui::Context) {
@@ -1042,22 +1045,45 @@ impl App {
         });
 
         section(ui, "About", |_| {});
+        let mut notices = false;
         group(ui, |ui| {
             setting_row(
                 ui,
                 0,
                 RichText::new(format!("Kestrel {}", env!("CARGO_PKG_VERSION"))).color(TEXT),
-                "Runs only while open. No services, telemetry, network access or automatic cleanup.",
+                "Runs only while open. No services, telemetry or automatic cleanup. The only network access is the optional update check.",
                 |_| {},
             );
             setting_row(
                 ui,
                 1,
+                RichText::new("License").color(TEXT),
+                "Free for personal and other noncommercial use (PolyForm Noncommercial 1.0.0). Built with open-source libraries that keep their own licenses.",
+                |ui| {
+                    if link(ui, "Third-party notices").clicked() {
+                        notices = true;
+                    }
+                    if link(ui, "License").clicked() {
+                        open_uri(&format!("{}/blob/main/LICENSE.md", crate::update::REPO));
+                    }
+                },
+            );
+            setting_row(
+                ui,
+                2,
                 RichText::new("Left to Windows").color(TEXT),
                 "Windows.old and component-store cleanup (Settings > System > Storage > Cleanup recommendations). Kestrel also doesn't mark apps as unused, because Windows has no reliable usage data for them.",
                 |_| {},
             );
         });
+        if notices {
+            // Built into the exe, so every copy carries the libraries' licenses; written out only to be read.
+            let path = data_dir().join("THIRD-PARTY-NOTICES.txt");
+            match std::fs::write(&path, THIRD_PARTY_NOTICES) {
+                Ok(()) => open_uri(&path.to_string_lossy()),
+                Err(e) => self.show_error("Third-party notices", format!("Couldn't save the notices to open them: {e}")),
+            }
+        }
     }
 
     pub(crate) fn optimize_dialog(&mut self, ctx: &egui::Context) {
