@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.13.0: App and driver updates
+- **Updates (new page):** keep your apps and drivers current from one place. Nothing is checked until you click, and nothing installs without a confirmation.
+  - **Apps:** lists installed apps with a newer version in the winget catalog (Windows' own package manager), with the installed and available version. Update one, tick several, or Update all; they update silently one after another, with progress and "Cancel the rest", and one summary at the end. winget checks each installer's hash; installers that need administrator rights get Windows' normal prompt. A link opens the Microsoft Store's updates for Store apps.
+  - **Drivers:** asks Windows Update for driver updates matched to this PC's hardware (certified by Microsoft; always Microsoft's servers, also on PCs that use a company update server). Install one or several as administrator: Kestrel creates a restore point first, accepts the driver's license on your confirmation, and reports each result and whether Windows needs a restart. It never restarts for you. Rollback: Device Manager's Roll Back Driver or System Restore.
+  - **Graphics driver:** your GPU's driver version and age, with a link to NVIDIA, AMD or Intel's official driver page. GPU makers offer no update API, and Kestrel doesn't use third-party driver sources.
+- Kestrel's own updates stay in Settings > Updates.
+- **New logo:** a kestrel's head with its dark "tear mark" stripe under the eye. It's the icon of kestrel.exe itself (File Explorer, Downloads, shortcuts), the window, taskbar and tray; the sidebar shows the bird on its own, larger. It's drawn at each size it's shown, with the eye, stripe and beak slightly thickened at 16 and 24 px so they stay visible.
+- Fixed: the tray icon could read past the end of its mask at 150% display scaling.
+
 ## 0.12.2: Banner fix
 - **Banners and dialog warnings** no longer fill the whole page. 0.12.0's fix for text running under the buttons made banners (like "Update available") and the warning box in confirmation dialogs stretch to all the space they were given. They're back to the height of their text, and the test now also checks their height.
 

@@ -92,33 +92,51 @@ fn gpus() -> Vec<(String, String, String)> {
         .collect()
 }
 
-fn gpu_driver() -> Check {
+/// Each graphics adapter: (name, driver version, driver age in months if known).
+pub(crate) fn gpu_drivers() -> Vec<(String, String, Option<i32>)> {
     let now = local_time();
     let (y, m) = (now[..4].parse::<i32>().unwrap_or(0), now[5..7].parse::<i32>().unwrap_or(0));
-    let list = gpus();
-    let mut old = false;
+    gpus()
+        .into_iter()
+        .map(|(name, version, date)| {
+            let months = parse_driver_date(&date).map(|(dy, dm)| ((y * 12 + m) - (dy * 12 + dm)).max(0));
+            (name, version, months)
+        })
+        .collect()
+}
+
+/// "this month" / "N month(s) old".
+pub(crate) fn driver_age(months: i32) -> String {
+    if months == 0 {
+        "this month".into()
+    } else {
+        format!("{months} month(s) old")
+    }
+}
+
+/// The GPU maker's official driver page.
+pub(crate) fn gpu_vendor(name: &str) -> (&'static str, &'static str) {
+    let n = name.to_lowercase();
+    if n.contains("nvidia") {
+        ("NVIDIA drivers", "https://www.nvidia.com/en-us/drivers/")
+    } else if n.contains("amd") || n.contains("radeon") {
+        ("AMD drivers", "https://www.amd.com/en/support/download/drivers.html")
+    } else {
+        ("Intel drivers", "https://www.intel.com/content/www/us/en/download-center/home.html")
+    }
+}
+
+fn gpu_driver() -> Check {
+    let list = gpu_drivers();
+    let old = list.iter().any(|(.., months)| months.is_some_and(|m| m > 12));
     let lines: Vec<String> = list
         .iter()
-        .map(|(name, version, date)| match parse_driver_date(date) {
-            Some((dy, dm)) => {
-                let months = (y * 12 + m) - (dy * 12 + dm);
-                old |= months > 12;
-                let age = if months <= 0 { "this month".to_string() } else { format!("{months} month(s) old") };
-                format!("{name}: driver {version}, {age}")
-            }
+        .map(|(name, version, months)| match months {
+            Some(m) => format!("{name}: driver {version}, {}", driver_age(*m)),
             None => format!("{name}: driver {version}"),
         })
         .collect();
-    let link = list.first().map(|(name, ..)| {
-        let n = name.to_lowercase();
-        if n.contains("nvidia") {
-            ("NVIDIA drivers", "https://www.nvidia.com/en-us/drivers/")
-        } else if n.contains("amd") || n.contains("radeon") {
-            ("AMD drivers", "https://www.amd.com/en/support/download/drivers.html")
-        } else {
-            ("Intel drivers", "https://www.intel.com/content/www/us/en/download-center/home.html")
-        }
-    });
+    let link = list.first().map(|(name, ..)| gpu_vendor(name));
     let mut detail = if lines.is_empty() { "Couldn't read graphics driver details.".to_string() } else { lines.join(". ") + "." };
     if old {
         detail.push_str(" Drivers over a year old often miss performance fixes for newer games; get the current one from your GPU maker.");

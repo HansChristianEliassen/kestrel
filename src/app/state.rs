@@ -9,12 +9,15 @@ use crate::optimizer::health::Check;
 use crate::optimizer::{Preset, Tweak};
 use crate::startup::StartupEntry;
 use crate::uninstaller::InstalledApp;
+use crate::upgrade::apps::AppUpdate;
+use crate::upgrade::drivers::DriverUpdate;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Page {
     Dashboard,
     Cleaner,
     Apps,
+    Upgrades,
     Startup,
     Gaming,
     GameMode,
@@ -22,13 +25,15 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 7] = [Page::Dashboard, Page::Cleaner, Page::Apps, Page::Startup, Page::Gaming, Page::GameMode, Page::Settings];
+    pub const ALL: [Page; 8] =
+        [Page::Dashboard, Page::Cleaner, Page::Apps, Page::Upgrades, Page::Startup, Page::Gaming, Page::GameMode, Page::Settings];
 
     pub fn label(self) -> &'static str {
         match self {
             Page::Dashboard => "Overview",
             Page::Cleaner => "Cleanup",
             Page::Apps => "Apps",
+            Page::Upgrades => "Updates",
             Page::Startup => "Startup apps",
             Page::Gaming => "Gaming",
             Page::GameMode => "Game Mode",
@@ -42,6 +47,7 @@ impl Page {
             Page::Dashboard => icon::HOME,
             Page::Cleaner => icon::BROOM,
             Page::Apps => icon::APPS,
+            Page::Upgrades => icon::UPDATE,
             Page::Startup => icon::POWER,
             Page::Gaming => icon::SPEED,
             Page::GameMode => icon::GAME,
@@ -88,6 +94,9 @@ pub enum Action {
     RestoreAll,
     /// Swap in the verified update and restart.
     InstallUpdate,
+    UpdateApps(Vec<AppUpdate>),
+    /// Restore point first, then download and install these drivers from Windows Update.
+    InstallDrivers(Vec<DriverUpdate>),
 }
 
 pub struct Confirm {
@@ -320,4 +329,28 @@ pub struct OptState {
     pub refresh: Vec<(String, u32, u32)>,
     pub refresh_on: bool,
     pub attention: Vec<&'static str>,
+}
+
+/// The Updates page: app updates through winget, driver updates through Windows Update.
+#[derive(Default)]
+pub struct UpgradeState {
+    /// None until the first check.
+    pub apps: Option<Vec<AppUpdate>>,
+    pub apps_job: Job<Result<Vec<AppUpdate>, String>>,
+    /// Ids ticked for "Update selected".
+    pub apps_selected: std::collections::HashSet<String>,
+    /// One `winget upgrade` after another: result lines.
+    pub install: Job<Vec<String>>,
+    /// Names in the running queue, and the index of the one updating.
+    pub queue: Vec<String>,
+    pub queue_pos: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    pub cancel_queue: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub drivers: Option<Vec<DriverUpdate>>,
+    pub drivers_job: Job<Result<Vec<DriverUpdate>, String>>,
+    pub drivers_selected: std::collections::HashSet<String>,
+    /// (result lines, restart needed)
+    pub driver_install: Job<Result<(Vec<String>, bool), String>>,
+    pub restart_needed: bool,
+    /// Graphics adapters: (name, driver version, age in months). Read when the page opens.
+    pub gpus: Vec<(String, String, Option<i32>)>,
 }

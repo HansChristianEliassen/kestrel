@@ -115,6 +115,7 @@ pub mod icon {
     pub const SPEED: &str = "\u{EC4A}";
     pub const GAME: &str = "\u{E7FC}";
     pub const SETTINGS: &str = "\u{E713}";
+    pub const UPDATE: &str = "\u{E895}";
 }
 
 pub fn icon_font(size: f32) -> FontId {

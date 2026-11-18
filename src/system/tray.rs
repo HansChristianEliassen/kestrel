@@ -81,7 +81,8 @@ unsafe fn menu(hwnd: HWND) -> usize {
 /// HICON from RGBA pixels (straight alpha), using a 32-bit color bitmap.
 fn make_icon(rgba: &[u8], size: u32) -> Option<HICON> {
     let bgra: Vec<u8> = rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[2], p[1], p[0], p[3]]).collect();
-    let mask = vec![0u8; (size * size / 8) as usize];
+    // 1-bit mask rows are padded to 2 bytes (a 24 px row needs 4 bytes, not 3).
+    let mask = vec![0u8; (size.div_ceil(16) * 2 * size) as usize];
     unsafe {
         let color = CreateBitmap(size as i32, size as i32, 1, 32, Some(bgra.as_ptr().cast()));
         let mask = CreateBitmap(size as i32, size as i32, 1, 1, Some(mask.as_ptr().cast()));

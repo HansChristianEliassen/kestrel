@@ -3,12 +3,14 @@
 mod app;
 mod cleaner;
 mod gamemode;
+mod logo;
 mod optimizer;
 mod startup;
 mod system;
 mod ui;
 mod uninstaller;
 mod update;
+mod upgrade;
 mod utils;
 
 use eframe::egui;
@@ -43,29 +45,50 @@ fn main() -> eframe::Result {
     )
 }
 
-/// Window, taskbar and tray icon, drawn in code: white wings (a kestrel in flight) on the accent-blue rounded square.
+/// Window, taskbar and tray icon (see `logo`).
 pub(crate) fn icon() -> egui::IconData {
-    const N: usize = 64;
-    let seg = |px: f32, py: f32, (ax, ay): (f32, f32), (bx, by): (f32, f32)| {
-        let (dx, dy) = (bx - ax, by - ay);
-        let t = (((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
-        ((px - ax - t * dx).powi(2) + (py - ay - t * dy).powi(2)).sqrt()
-    };
-    let mut rgba = Vec::with_capacity(N * N * 4);
-    for y in 0..N {
-        for x in 0..N {
-            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-            // Rounded square, corner radius 14.
-            let (cx, cy) = ((px - 32.0).abs() - 18.0, (py - 32.0).abs() - 18.0);
-            let corner = cx.max(0.0).hypot(cy.max(0.0)) + cx.max(cy).min(0.0) - 14.0;
-            let inside = (0.5 - corner).clamp(0.0, 1.0);
-            let wing = seg(px, py, (14.0, 26.0), (32.0, 40.0)).min(seg(px, py, (32.0, 40.0), (50.0, 26.0)));
-            let white = (4.5 - wing).clamp(0.0, 1.0);
-            let mix = |accent: f32| (accent + (255.0 - accent) * white) as u8;
-            rgba.extend([mix(0x4C as f32), mix(0x8B as f32), mix(0xE8 as f32), (inside * 255.0) as u8]);
+    icon_sized(64)
+}
+
+pub(crate) fn icon_sized(n: usize) -> egui::IconData {
+    egui::IconData { rgba: logo::rgba(n, true), width: n as u32, height: n as u32 }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    fn px(i: &eframe::egui::IconData, x: f32, y: f32) -> [u8; 4] {
+        let n = i.width as f32;
+        let at = ((y / 100.0 * n) as usize * i.width as usize + (x / 100.0 * n) as usize) * 4;
+        i.rgba[at..at + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn tear_mark_at_every_size() {
+        for n in [16, 24, 32, 64, 256] {
+            let i = super::icon_sized(n);
+            assert_eq!(px(&i, 1.0, 1.0)[3], 0, "{n}: corner outside the rounded tile is transparent");
+            assert_eq!(px(&i, 40.0, 40.0), [200, 105, 58, 255], "{n}: head is rufous");
+            assert_eq!(px(&i, 64.0, 38.0), [30, 30, 30, 255], "{n}: eye is dark");
+            assert_eq!(px(&i, 12.0, 50.0), [30, 30, 30, 255], "{n}: tile behind the head");
+            // Sidebar mark: only the bird, with the eye cut out.
+            let bird = eframe::egui::IconData { rgba: super::logo::rgba(n, false), width: n as u32, height: n as u32 };
+            assert_eq!(px(&bird, 12.0, 50.0)[3], 0, "{n}: no tile");
+            assert_eq!(px(&bird, 64.0, 38.0)[3], 0, "{n}: eye is a hole");
+            assert_eq!(px(&bird, 40.0, 40.0), [200, 105, 58, 255], "{n}: head is rufous");
         }
     }
-    egui::IconData { rgba, width: N as u32, height: N as u32 }
+
+    /// Writes the icon at each size to KESTREL_ICON_DIR for review.
+    #[test]
+    #[ignore]
+    fn dump() {
+        let dir = std::path::PathBuf::from(std::env::var_os("KESTREL_ICON_DIR").unwrap());
+        for n in [16, 24, 32, 64, 256] {
+            let i = super::icon_sized(n);
+            let img = eframe::egui::ColorImage::from_rgba_unmultiplied([n, n], &i.rgba);
+            std::fs::write(dir.join(format!("icon-{n}.png")), crate::app::devshots::png(&img)).unwrap();
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 #[cfg(debug_assertions)]
-mod devshots;
+pub(crate) mod devshots;
 pub mod state;
 
 use eframe::egui;
@@ -11,7 +11,7 @@ use crate::system::{create_restore_point, is_admin, windows_build};
 use crate::ui::components::{accent_button, button, confirm, dialog, dialog_buttons, dialog_title, secondary, toasts, Toast, BG, SIDEBAR};
 use crate::utils::log;
 use crate::utils::logging::read_history;
-use crate::{startup, uninstaller, update};
+use crate::{startup, uninstaller, update, upgrade};
 use state::*;
 
 pub struct App {
@@ -26,6 +26,7 @@ pub struct App {
     pub(crate) show_ok_checks: bool,
     pub(crate) cleaner: CleanerState,
     pub(crate) apps: AppsState,
+    pub(crate) upgrades: UpgradeState,
     pub(crate) startup: StartupState,
     pub(crate) gaming: GamingState,
     pub(crate) opt: OptState,
@@ -62,6 +63,7 @@ impl App {
             show_ok_checks: false,
             cleaner: CleanerState::default(),
             apps: AppsState::default(),
+            upgrades: UpgradeState::default(),
             startup: StartupState::default(),
             gaming: GamingState { selected: preset_selection(Preset::Balanced, build), ..Default::default() },
             opt: OptState::default(),
@@ -158,7 +160,10 @@ impl App {
         use crate::system::tray::{taskbar_button, Request, Tray};
         let want = self.gamemode.config.tray;
         if want && self.tray.is_none() {
-            self.tray = Tray::add(ctx, &crate::icon());
+            // Drawn at the tray's own size (16 px at 100% scaling) so the small-size details survive.
+            let size =
+                unsafe { windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows::Win32::UI::WindowsAndMessaging::SM_CXSMICON) };
+            self.tray = Tray::add(ctx, &crate::icon_sized(size.clamp(16, 64) as usize));
             if self.tray.is_none() {
                 self.gamemode.config.tray = false;
                 let _ = self.gamemode.config.save();
@@ -262,6 +267,7 @@ impl App {
         self.page = page;
         match page {
             Page::Apps if !self.apps.loaded => self.load_apps(ctx),
+            Page::Upgrades => self.upgrades.gpus = health::gpu_drivers(),
             Page::Startup if !self.startup.loaded => self.load_startup(ctx),
             Page::Gaming => self.refresh_gaming(ctx),
             Page::GameMode => {
@@ -284,6 +290,18 @@ impl App {
     pub(crate) fn load_apps(&mut self, ctx: &egui::Context) {
         self.apps.loaded = true;
         self.apps.load.start(ctx, uninstaller::list);
+    }
+
+    pub(crate) fn check_app_updates(&mut self, ctx: &egui::Context) {
+        if !self.upgrades.apps_job.running() && !self.upgrades.install.running() {
+            self.upgrades.apps_job.start(ctx, upgrade::apps::available);
+        }
+    }
+
+    pub(crate) fn check_driver_updates(&mut self, ctx: &egui::Context) {
+        if !self.upgrades.drivers_job.running() && !self.upgrades.driver_install.running() {
+            self.upgrades.drivers_job.start(ctx, upgrade::drivers::available);
+        }
     }
 
     pub(crate) fn load_startup(&mut self, ctx: &egui::Context) {
@@ -469,6 +487,43 @@ impl App {
             // Reverse order: per-plan power settings are restored before the power plan itself switches back.
             Action::RestoreAll => self.start_restore(ctx, Tweak::ALL.into_iter().rev().collect(), true),
             Action::InstallUpdate => self.install_update(ctx),
+            Action::UpdateApps(apps) => {
+                use std::sync::atomic::Ordering::Relaxed;
+                let up = &mut self.upgrades;
+                let (cancel, pos) = (up.cancel_queue.clone(), up.queue_pos.clone());
+                cancel.store(false, Relaxed);
+                up.apps_selected.clear();
+                up.queue = apps.iter().map(|a| a.name.clone()).collect();
+                let ctx2 = ctx.clone();
+                up.install.start(ctx, move || {
+                    let mut lines = Vec::new();
+                    for (i, app) in apps.iter().enumerate() {
+                        if cancel.load(Relaxed) {
+                            lines.push(format!("Skipped {} (you cancelled the rest).", app.name));
+                            continue;
+                        }
+                        pos.store(i, Relaxed);
+                        ctx2.request_repaint();
+                        let line = upgrade::apps::install(app).unwrap_or_else(|e| format!("âœ– {e}"));
+                        log(&format!("App update: {line} ({} {} to {})", app.id, app.current, app.available));
+                        lines.push(line);
+                    }
+                    lines
+                });
+            }
+            Action::InstallDrivers(drivers) => {
+                let ids: Vec<String> = drivers.iter().map(|d| d.id.clone()).collect();
+                self.upgrades.drivers_selected.clear();
+                self.upgrades.driver_install.start(ctx, move || {
+                    // The restore point is the safety net, but a PC with System Protection off can still install.
+                    let point = create_restore_point()
+                        .unwrap_or_else(|e| format!("No restore point: {e} Device Manager can still roll back each driver."));
+                    let (mut lines, reboot) = upgrade::drivers::install(&ids)?;
+                    lines.iter().for_each(|l| log(&format!("Driver update: {l}")));
+                    lines.insert(0, point);
+                    Ok((lines, reboot))
+                });
+            }
         }
     }
 
@@ -549,6 +604,44 @@ impl App {
             self.apps.queue.clear();
             self.show_notice("Uninstall", lines.join("\n"));
             self.load_apps(ctx);
+        }
+        if let Some(result) = self.upgrades.apps_job.poll() {
+            match result {
+                Ok(list) => {
+                    // Ticks for apps that are no longer listed would update nothing.
+                    self.upgrades.apps_selected.retain(|id| list.iter().any(|a| &a.id == id));
+                    self.upgrades.apps = Some(list);
+                }
+                Err(e) => self.show_error("Couldn't check for app updates", e),
+            }
+        }
+        if let Some(lines) = self.upgrades.install.poll() {
+            self.upgrades.queue.clear();
+            self.show_notice("App updates", lines.join("\n"));
+            self.check_app_updates(ctx);
+        }
+        if let Some(result) = self.upgrades.drivers_job.poll() {
+            match result {
+                Ok(list) => {
+                    self.upgrades.drivers_selected.retain(|id| list.iter().any(|d| &d.id == id));
+                    self.upgrades.drivers = Some(list);
+                }
+                Err(e) => self.show_error("Couldn't check for driver updates", e),
+            }
+        }
+        if let Some(result) = self.upgrades.driver_install.poll() {
+            match result {
+                Ok((mut lines, reboot)) => {
+                    if reboot {
+                        lines.push("Restart Windows to finish installing. Kestrel doesn't restart for you.".into());
+                    }
+                    self.upgrades.restart_needed |= reboot;
+                    self.show_notice("Driver updates", lines.join("\n"));
+                }
+                Err(e) => self.show_error("Drivers not installed", e),
+            }
+            self.upgrades.gpus = health::gpu_drivers();
+            self.check_driver_updates(ctx);
         }
         if let Some(entries) = self.startup.load.poll() {
             self.startup.entries = entries;
@@ -698,6 +791,7 @@ impl eframe::App for App {
                         Page::Dashboard => self.dashboard(ui),
                         Page::Cleaner => self.cleaner_page(ui),
                         Page::Apps => self.apps_page(ui),
+                        Page::Upgrades => self.upgrades_page(ui),
                         Page::Startup => self.startup_page(ui),
                         Page::Gaming => self.gaming_page(ui),
                         Page::GameMode => self.game_mode_page(ui),

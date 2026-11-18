@@ -3,6 +3,7 @@
 pub mod components;
 mod gamemode;
 mod updates;
+mod upgrades;
 
 use std::path::Path;
 
@@ -82,6 +83,9 @@ pub fn apply_theme(ctx: &egui::Context) {
     ctx.set_style_of(egui::Theme::Dark, style);
 }
 
+/// Sidebar logo size; the bird fills about two thirds of it.
+const BRAND: f32 = 36.0;
+
 fn nav_item(ui: &mut Ui, page: Page, selected: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, page.label()));
@@ -109,16 +113,22 @@ impl App {
         let brand = self
             .brand
             .get_or_insert_with(|| {
-                let i = crate::icon();
-                let image = egui::ColorImage::from_rgba_unmultiplied([i.width as usize, i.height as usize], &i.rgba);
+                // Just the bird (no tile), drawn at its exact on-screen pixel size so it stays sharp.
+                let n = (BRAND * ui.ctx().pixels_per_point()).round() as usize;
+                let image = egui::ColorImage::from_rgba_unmultiplied([n, n], &crate::logo::rgba(n, false));
                 ui.ctx().load_texture("brand", image, egui::TextureOptions::LINEAR)
             })
             .clone();
         ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            ui.spacing_mut().item_spacing.x = S2 + 2.0;
-            ui.add(egui::Image::new(&brand).fit_to_exact_size(vec2(20.0, 20.0)));
-            ui.label(RichText::new("Kestrel").font(semibold(15.0)).color(TEXT));
+            // Page icons start 14 px into their row and labels at 42 px; the bird starts a quarter into its square.
+            let row = ui.cursor().left();
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.add_space(14.0 - BRAND * 0.25);
+            ui.add(egui::Image::new(&brand).fit_to_exact_size(vec2(BRAND, BRAND)));
+            // Painted like the page names (nav_item), so it starts exactly where they do.
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), BRAND), Sense::hover());
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Kestrel"));
+            ui.painter().text(egui::pos2(row + 42.0, rect.center().y), Align2::LEFT_CENTER, "Kestrel", semibold(15.0), TEXT);
         });
         ui.add_space(S4 + 2.0);
         ui.spacing_mut().item_spacing.y = 2.0;

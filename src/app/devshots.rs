@@ -35,7 +35,12 @@ impl App {
         if self.page != page {
             self.go(page, ctx);
             s.since = Instant::now();
+            // Updates checks only run on a click: leave apps unchecked and list drivers, so both states show (read-only).
+            if page == Page::Upgrades {
+                self.check_driver_updates(ctx);
+            }
         }
+        let settle = if page == Page::Upgrades { SETTLE * 3 } else { SETTLE };
         let shot = ctx.input(|i| {
             i.events.iter().find_map(|e| match e {
                 egui::Event::Screenshot { image, .. } => Some(image.clone()),
@@ -50,7 +55,7 @@ impl App {
             if s.next == Page::ALL.len() {
                 std::process::exit(0);
             }
-        } else if !s.asked && s.since.elapsed() >= SETTLE {
+        } else if !s.asked && s.since.elapsed() >= settle {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
             s.asked = true;
         }
@@ -59,7 +64,7 @@ impl App {
 }
 
 /// Minimal PNG encoder (RGBA, uncompressed deflate blocks): enough for screenshots, no dependency.
-fn png(image: &egui::ColorImage) -> Vec<u8> {
+pub(crate) fn png(image: &egui::ColorImage) -> Vec<u8> {
     fn crc32(data: &[u8]) -> u32 {
         let mut c = 0xffff_ffffu32;
         for &b in data {
