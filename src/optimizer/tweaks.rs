@@ -20,6 +20,8 @@ const SUB_USB: &str = "2a737441-1930-4402-8d77-b2bebba308a3";
 const USB_SELECTIVE_SUSPEND: &str = "48e6b7a6-50f5-4782-a5d4-53bb8f07e226";
 const DX_PREFS: &str = r"Software\Microsoft\DirectX\UserGpuPreferences";
 const DX_GLOBAL: &str = "DirectXUserGlobalSettings";
+const CDM: &str = r"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager";
+const EXPLORER_ADVANCED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
 
 /// Declaration order = `ALL` order = display order (grouped by category).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -34,6 +36,14 @@ pub enum Tweak {
     HighPerfPower,
     UsbSuspendOff,
     NoMouseAccel,
+    // Privacy (Privacy page only; never in a preset).
+    PrivacyAdId,
+    PrivacyTailored,
+    PrivacyLanguageList,
+    PrivacySuggestions,
+    PrivacyStart,
+    PrivacyInking,
+    PrivacySpeech,
 }
 
 pub struct Info {
@@ -44,7 +54,7 @@ pub struct Info {
 }
 
 impl Tweak {
-    pub const ALL: [Tweak; 10] = [
+    pub const ALL: [Tweak; 17] = [
         Tweak::GameMode,
         Tweak::GameDvrOff,
         Tweak::NoBackgroundApps,
@@ -55,7 +65,19 @@ impl Tweak {
         Tweak::HighPerfPower,
         Tweak::UsbSuspendOff,
         Tweak::NoMouseAccel,
+        Tweak::PrivacyAdId,
+        Tweak::PrivacyTailored,
+        Tweak::PrivacyLanguageList,
+        Tweak::PrivacySuggestions,
+        Tweak::PrivacyStart,
+        Tweak::PrivacyInking,
+        Tweak::PrivacySpeech,
     ];
+
+    /// Shown on the Privacy page instead of Gaming.
+    pub fn is_privacy(self) -> bool {
+        self as usize >= Tweak::PrivacyAdId as usize
+    }
 
     pub fn index(self) -> usize {
         self as usize
@@ -109,6 +131,13 @@ impl Tweak {
             Tweak::NoMouseAccel => "mouse_accel",
             Tweak::WindowedGames => "windowed_games",
             Tweak::UsbSuspendOff => "usb_suspend",
+            Tweak::PrivacyAdId => "privacy_ad_id",
+            Tweak::PrivacyTailored => "privacy_tailored",
+            Tweak::PrivacyLanguageList => "privacy_language_list",
+            Tweak::PrivacySuggestions => "privacy_suggestions",
+            Tweak::PrivacyStart => "privacy_start",
+            Tweak::PrivacyInking => "privacy_inking",
+            Tweak::PrivacySpeech => "privacy_speech",
         }
     }
 
@@ -174,6 +203,48 @@ impl Tweak {
                 "Prevents wake-up delays and dropouts on controllers, headsets and other USB devices.",
                 "Slightly higher idle power use. Applies to the current power plan only; a mouse you're using never sleeps anyway.",
             ),
+            Tweak::PrivacyAdId => (
+                "Turn off the advertising ID",
+                "Apps can no longer use your advertising ID to tie what you do across apps to personalized ads (Settings > Privacy & security > General).",
+                "Ads in apps stop being personalized from your activity in other apps.",
+                "You still see ads, just less targeted ones.",
+            ),
+            Tweak::PrivacyTailored => (
+                "Turn off tailored experiences",
+                "Microsoft stops using your diagnostic data to personalize tips, ads and recommendations (Settings > Privacy & security > Diagnostics & feedback).",
+                "Less of your usage data is used for marketing.",
+                "Tips and recommendations are less personal.",
+            ),
+            Tweak::PrivacyLanguageList => (
+                "Hide your language list from websites",
+                "Websites can no longer read the languages you've set in Windows to show local content (Settings > Privacy & security > General).",
+                "One less detail sites can use to recognize you.",
+                "A few websites may not pick your language automatically.",
+            ),
+            Tweak::PrivacySuggestions => (
+                "Turn off tips and suggestions",
+                "Turns off suggested content in Settings, tips while using Windows, \"finish setting up your device\" prompts, and fun facts and tips on the lock screen.",
+                "Fewer promotions and prompts, and less content fetched in the background.",
+                "You won't get tips about new Windows features. Your lock screen picture stays.",
+            ),
+            Tweak::PrivacyStart => (
+                "Turn off Start recommendations",
+                "Start stops recommending tips, shortcuts and new apps, and stops showing Microsoft account notifications (Settings > Personalization > Start).",
+                "A cleaner Start menu without promotions.",
+                "Your recently opened files stay in Start. May need a sign-out to fully apply.",
+            ),
+            Tweak::PrivacyInking => (
+                "Turn off inking and typing personalization",
+                "Windows stops building a personal dictionary from what you type and handwrite, and stops sending it to Microsoft (Settings > Privacy & security > Inking & typing personalization).",
+                "What you type isn't used to build a profile.",
+                "Handwriting recognition and typing suggestions learn less from you.",
+            ),
+            Tweak::PrivacySpeech => (
+                "Turn off online speech recognition",
+                "Your voice is no longer sent to Microsoft's speech service (Settings > Privacy & security > Speech).",
+                "Voice recordings stay on your PC.",
+                "Voice typing (Win+H) and other features that need online recognition stop working.",
+            ),
         };
         Info { title, purpose, benefit, drawback }
     }
@@ -189,6 +260,31 @@ impl Tweak {
                 (r"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications", "GlobalUserDisabled", 1),
                 (r"Software\Microsoft\Windows\CurrentVersion\Search", "BackgroundAppGlobalToggle", 0),
             ],
+            // The per-user values the matching switches in Settings write.
+            Tweak::PrivacyAdId => &[(r"Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo", "Enabled", 0)],
+            Tweak::PrivacyTailored => {
+                &[(r"Software\Microsoft\Windows\CurrentVersion\Privacy", "TailoredExperiencesWithDiagnosticDataEnabled", 0)]
+            }
+            Tweak::PrivacyLanguageList => &[(r"Control Panel\International\User Profile", "HttpAcceptLanguageOptOut", 1)],
+            Tweak::PrivacySuggestions => &[
+                (CDM, "SubscribedContent-338393Enabled", 0),
+                (CDM, "SubscribedContent-353694Enabled", 0),
+                (CDM, "SubscribedContent-353696Enabled", 0),
+                (CDM, "SubscribedContent-338389Enabled", 0),
+                (CDM, "SubscribedContent-338387Enabled", 0),
+                (CDM, "RotatingLockScreenOverlayEnabled", 0),
+                (r"Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement", "ScoobeSystemSettingEnabled", 0),
+            ],
+            Tweak::PrivacyStart => {
+                &[(EXPLORER_ADVANCED, "Start_IrisRecommendations", 0), (EXPLORER_ADVANCED, "Start_AccountNotifications", 0)]
+            }
+            Tweak::PrivacyInking => &[
+                (r"Software\Microsoft\InputPersonalization", "RestrictImplicitInkCollection", 1),
+                (r"Software\Microsoft\InputPersonalization", "RestrictImplicitTextCollection", 1),
+                (r"Software\Microsoft\InputPersonalization\TrainedDataStore", "HarvestContacts", 0),
+                (r"Software\Microsoft\Personalization\Settings", "AcceptedPrivacyPolicy", 0),
+            ],
+            Tweak::PrivacySpeech => &[(r"Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy", "HasAccepted", 0)],
             _ => &[],
         }
     }

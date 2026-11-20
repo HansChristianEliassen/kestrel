@@ -276,6 +276,7 @@ impl App {
             }
             Page::Startup if !self.startup.loaded => self.load_startup(ctx),
             Page::Gaming => self.refresh_gaming(ctx),
+            Page::Privacy if !self.gaming.status_job.running() => self.gaming.status_job.start(ctx, tweak_status),
             Page::GameMode => {
                 if self.gaming.games.is_empty() {
                     self.load_games(ctx);
@@ -496,30 +497,8 @@ impl App {
             // Reverse order: per-plan power settings are restored before the power plan itself switches back.
             Action::RestoreAll => self.start_restore(ctx, Tweak::ALL.into_iter().rev().collect(), true),
             Action::InstallUpdate => self.install_update(ctx),
-            Action::UpdateApps(apps) => {
-                use std::sync::atomic::Ordering::Relaxed;
-                let up = &mut self.upgrades;
-                let (cancel, pos) = (up.cancel_queue.clone(), up.queue_pos.clone());
-                cancel.store(false, Relaxed);
-                up.apps_selected.clear();
-                up.queue = apps.iter().map(|a| a.name.clone()).collect();
-                let ctx2 = ctx.clone();
-                up.install.start(ctx, move || {
-                    let mut lines = Vec::new();
-                    for (i, app) in apps.iter().enumerate() {
-                        if cancel.load(Relaxed) {
-                            lines.push(format!("Skipped {} (you cancelled the rest).", app.name));
-                            continue;
-                        }
-                        pos.store(i, Relaxed);
-                        ctx2.request_repaint();
-                        let line = upgrade::apps::install(app).unwrap_or_else(|e| format!("âœ– {e}"));
-                        log(&format!("App update: {line} ({} {} to {})", app.id, app.current, app.available));
-                        lines.push(line);
-                    }
-                    lines
-                });
-            }
+            Action::UpdateApps(apps) => self.start_app_queue(ctx, apps, false),
+            Action::InstallApps(apps) => self.start_app_queue(ctx, apps, true),
             Action::InstallDrivers(drivers) => {
                 let ids: Vec<String> = drivers.iter().map(|d| d.id.clone()).collect();
                 self.upgrades.drivers_selected.clear();
@@ -534,6 +513,38 @@ impl App {
                 });
             }
         }
+    }
+
+    /// Runs winget for each app, one after another: updates, or with `new`, fresh installs from "Get apps".
+    fn start_app_queue(&mut self, ctx: &egui::Context, apps: Vec<upgrade::apps::AppUpdate>, new: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let up = &mut self.upgrades;
+        let (cancel, pos) = (up.cancel_queue.clone(), up.queue_pos.clone());
+        cancel.store(false, Relaxed);
+        up.new_installs = new;
+        if new {
+            self.apps.get_selected.clear();
+        } else {
+            up.apps_selected.clear();
+        }
+        up.queue = apps.iter().map(|a| a.name.clone()).collect();
+        let ctx2 = ctx.clone();
+        up.install.start(ctx, move || {
+            let mut lines = Vec::new();
+            for (i, app) in apps.iter().enumerate() {
+                if cancel.load(Relaxed) {
+                    lines.push(format!("Skipped {} (you cancelled the rest).", app.name));
+                    continue;
+                }
+                pos.store(i, Relaxed);
+                ctx2.request_repaint();
+                let result = if new { upgrade::apps::install_new(app) } else { upgrade::apps::install(app) };
+                let line = result.unwrap_or_else(|e| format!("\u{2716} {e}"));
+                log(&format!("App {}: {line} ({} {})", if new { "install" } else { "update" }, app.id, app.available));
+                lines.push(line);
+            }
+            lines
+        });
     }
 
     pub(crate) fn apply_optimize(&mut self, ctx: &egui::Context) {
@@ -617,6 +628,8 @@ impl App {
         if let Some(result) = self.upgrades.apps_job.poll() {
             match result {
                 Ok(list) => {
+                    let (list, hidden) = upgrade::apps::without_skipped(list);
+                    self.upgrades.skipped = hidden;
                     // Ticks for apps that are no longer listed would update nothing.
                     self.upgrades.apps_selected.retain(|id| list.iter().any(|a| &a.id == id));
                     self.upgrades.apps = Some(list);
@@ -626,8 +639,19 @@ impl App {
         }
         if let Some(lines) = self.upgrades.install.poll() {
             self.upgrades.queue.clear();
-            self.show_notice("App updates", lines.join("\n"));
-            self.check_app_updates(ctx);
+            if self.upgrades.new_installs {
+                self.show_notice("Get apps", lines.join("\n"));
+                self.load_apps(ctx); // the new apps appear under Installed apps
+            } else {
+                self.show_notice("App updates", lines.join("\n"));
+                self.check_app_updates(ctx);
+            }
+        }
+        if let Some(result) = self.apps.get_job.poll() {
+            match result {
+                Ok(list) => self.apps.get_results = Some(list),
+                Err(e) => self.show_error("Couldn't search for apps", e),
+            }
         }
         if let Some(result) = self.upgrades.drivers_job.poll() {
             match result {
@@ -672,7 +696,7 @@ impl App {
             self.gaming.games = games;
         }
         if let Some(lines) = self.gaming.apply.poll() {
-            self.show_notice("Gaming settings", lines.join("\n"));
+            self.show_notice("Settings", lines.join("\n"));
             self.refresh_gaming(ctx);
             self.gaming.games.iter_mut().for_each(|g| g.refresh());
         }
@@ -801,6 +825,7 @@ impl eframe::App for App {
                         Page::Cleaner => self.cleaner_page(ui),
                         Page::Apps => self.apps_page(ui),
                         Page::Upgrades => self.upgrades_page(ui),
+                        Page::Privacy => self.privacy_page(ui),
                         Page::Startup => self.startup_page(ui),
                         Page::Gaming => self.gaming_page(ui),
                         Page::GameMode => self.game_mode_page(ui),

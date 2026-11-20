@@ -2,6 +2,7 @@
 
 pub mod components;
 mod gamemode;
+mod privacy;
 mod updates;
 mod upgrades;
 
@@ -9,7 +10,7 @@ use std::path::Path;
 
 use eframe::egui::{self, vec2, Align, Align2, Color32, CornerRadius, FontId, Label, Layout, RichText, Sense, Stroke, TextStyle, Ui};
 
-use crate::app::state::{Action, CleanupTab, Confirm, GamingTab, OptStage, Page, SortBy};
+use crate::app::state::{Action, AppsTab, CleanupTab, Confirm, GamingState, GamingTab, OptStage, Page, SortBy};
 use crate::app::{preset_selection, App};
 use crate::cleaner::Kind;
 use crate::optimizer::games::Game;
@@ -495,7 +496,12 @@ fn uninstall_confirm(apps: Vec<InstalledApp>) -> Confirm {
 
 impl App {
     pub(crate) fn apps_page(&mut self, ui: &mut Ui) {
-        page_header(ui, "Apps", "Uninstall programs and Store apps with their own uninstaller. You confirm every removal.");
+        page_header(ui, "Apps", "Uninstall programs and Store apps with their own uninstaller, or get new ones. You confirm every change.");
+        pivot(ui, &mut self.apps.tab, &[(AppsTab::Installed, "Installed apps"), (AppsTab::Get, "Get apps")]);
+        if self.apps.tab == AppsTab::Get {
+            self.get_apps_tab(ui);
+            return;
+        }
         let busy = self.apps.load.running() || self.apps.uninstall.running();
         let mut refresh = false;
         ui.horizontal(|ui| {
@@ -783,7 +789,7 @@ impl App {
             }
             caption(ui, g.preset.desc());
         });
-        let chosen: Vec<Tweak> = Tweak::ALL.into_iter().filter(|t| g.selected[t.index()]).collect();
+        let chosen: Vec<Tweak> = Tweak::ALL.into_iter().filter(|t| !t.is_privacy() && g.selected[t.index()]).collect();
         let busy = g.apply.running();
         let (mut apply, mut restore, mut restore_point) = (false, false, false);
         ui.add_space(S2);
@@ -802,7 +808,11 @@ impl App {
         // Saved original but no longer active: Windows, another app or the user changed it back.
         let changed: Vec<Tweak> = Tweak::ALL
             .into_iter()
-            .filter(|t| t.unsupported(build).is_none() && g.status.get(t.index()).is_some_and(|(applied, backup, _)| *backup && !applied))
+            .filter(|t| {
+                !t.is_privacy()
+                    && t.unsupported(build).is_none()
+                    && g.status.get(t.index()).is_some_and(|(applied, backup, _)| *backup && !applied)
+            })
             .collect();
         let mut reapply = false;
         if !changed.is_empty() {
@@ -821,56 +831,12 @@ impl App {
                 // Windows 10-only setting: shown only so an old change can still be reverted.
                 let shown: Vec<Tweak> = Tweak::ALL
                     .into_iter()
-                    .filter(|t| Preset::Balanced.includes(*t) == recommended && (*t != Tweak::NoBackgroundApps || has_backup(t)))
+                    .filter(|t| {
+                        !t.is_privacy() && Preset::Balanced.includes(*t) == recommended && (*t != Tweak::NoBackgroundApps || has_backup(t))
+                    })
                     .collect();
-                for (i, t) in shown.into_iter().enumerate() {
-                    let info = t.info();
-                    let (applied, backup, not_needed) = g.status.get(t.index()).cloned().unwrap_or_default();
-                    let unsupported = t.unsupported(build).map(str::to_string).or(not_needed);
-                    let not_needed = unsupported.is_some() && t.unsupported(build).is_none();
-                    if unsupported.is_some() {
-                        g.selected[t.index()] = false;
-                    }
-                    row(ui, i, |ui| {
-                        // Title line: checkbox and name on the left; state and Revert on the same line, right.
-                        ui.horizontal(|ui| {
-                            let r = ui
-                                .add_enabled_ui(unsupported.is_none(), |ui| {
-                                    checkbox(ui, &mut g.selected[t.index()], RichText::new(info.title).color(TEXT))
-                                })
-                                .inner;
-                            if r.on_hover_text(format!("Benefit: {}", info.benefit)).changed() {
-                                g.preset = Preset::Custom;
-                            }
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if backup
-                                    && row_button(ui, true, "Revert")
-                                        .on_hover_text("Put back the value from before Kestrel changed it")
-                                        .clicked()
-                                {
-                                    revert = Some(t);
-                                }
-                                match unsupported {
-                                    Some(_) if not_needed => status(ui, Status::Ok, "Not needed"),
-                                    Some(_) => status(ui, Status::Neutral, "Not available"),
-                                    None if backup && !applied => status(ui, Status::Caution, "Changed back"),
-                                    None if applied => status(ui, Status::Ok, "On"),
-                                    None => status(ui, Status::Neutral, "Off"),
-                                };
-                            });
-                        });
-                        // Description under the name, kept to a readable width.
-                        ui.horizontal(|ui| {
-                            ui.add_space(26.0);
-                            ui.vertical(|ui| {
-                                ui.set_max_width((ui.available_width() - CONTROL_COL + 60.0).max(240.0));
-                                ui.label(RichText::new(unsupported.as_deref().unwrap_or(info.purpose)).size(CAPTION).color(TEXT_2));
-                                if unsupported.is_none() {
-                                    caption(ui, format!("Trade-off: {}", info.drawback));
-                                }
-                            });
-                        });
-                    });
+                if let Some(t) = tweak_rows(ui, g, shown, build) {
+                    revert = Some(t);
                 }
             });
         }
@@ -1305,6 +1271,60 @@ fn result_summary(ui: &mut Ui, lines: &[String]) {
     }
     ui.add_space(S3);
     caption(ui, "No restart is needed. Every changed setting can be put back in Settings > Restore everything. Results vary by PC: Kestrel doesn't promise a particular FPS gain.");
+}
+
+/// One row per tweak: checkbox, name, state and Revert on the title line, then what it does and its trade-off.
+/// Returns the tweak whose Revert was clicked.
+pub(super) fn tweak_rows(ui: &mut Ui, g: &mut GamingState, shown: Vec<Tweak>, build: u32) -> Option<Tweak> {
+    let mut revert = None;
+    for (i, t) in shown.into_iter().enumerate() {
+        let info = t.info();
+        let (applied, backup, not_needed) = g.status.get(t.index()).cloned().unwrap_or_default();
+        let unsupported = t.unsupported(build).map(str::to_string).or(not_needed);
+        let not_needed = unsupported.is_some() && t.unsupported(build).is_none();
+        if unsupported.is_some() {
+            g.selected[t.index()] = false;
+        }
+        row(ui, i, |ui| {
+            // Title line: checkbox and name on the left; state and Revert on the same line, right.
+            ui.horizontal(|ui| {
+                let r = ui
+                    .add_enabled_ui(unsupported.is_none(), |ui| {
+                        checkbox(ui, &mut g.selected[t.index()], RichText::new(info.title).color(TEXT))
+                    })
+                    .inner;
+                // Hand-picking gaming settings turns the preset into Custom; privacy settings aren't in presets.
+                if r.on_hover_text(format!("Benefit: {}", info.benefit)).changed() && !t.is_privacy() {
+                    g.preset = Preset::Custom;
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if backup && row_button(ui, true, "Revert").on_hover_text("Put back the value from before Kestrel changed it").clicked()
+                    {
+                        revert = Some(t);
+                    }
+                    match unsupported {
+                        Some(_) if not_needed => status(ui, Status::Ok, "Not needed"),
+                        Some(_) => status(ui, Status::Neutral, "Not available"),
+                        None if backup && !applied => status(ui, Status::Caution, "Changed back"),
+                        None if applied => status(ui, Status::Ok, "On"),
+                        None => status(ui, Status::Neutral, "Off"),
+                    };
+                });
+            });
+            // Description under the name, kept to a readable width.
+            ui.horizontal(|ui| {
+                ui.add_space(26.0);
+                ui.vertical(|ui| {
+                    ui.set_max_width((ui.available_width() - CONTROL_COL + 60.0).max(240.0));
+                    ui.label(RichText::new(unsupported.as_deref().unwrap_or(info.purpose)).size(CAPTION).color(TEXT_2));
+                    if unsupported.is_none() {
+                        caption(ui, format!("Trade-off: {}", info.drawback));
+                    }
+                });
+            });
+        });
+    }
+    revert
 }
 
 fn restore_all_confirm() -> Confirm {

@@ -18,6 +18,7 @@ pub enum Page {
     Cleaner,
     Apps,
     Upgrades,
+    Privacy,
     Startup,
     Gaming,
     GameMode,
@@ -25,8 +26,17 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 8] =
-        [Page::Dashboard, Page::Cleaner, Page::Apps, Page::Upgrades, Page::Startup, Page::Gaming, Page::GameMode, Page::Settings];
+    pub const ALL: [Page; 9] = [
+        Page::Dashboard,
+        Page::Cleaner,
+        Page::Apps,
+        Page::Upgrades,
+        Page::Privacy,
+        Page::Startup,
+        Page::Gaming,
+        Page::GameMode,
+        Page::Settings,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -34,6 +44,7 @@ impl Page {
             Page::Cleaner => "Cleanup",
             Page::Apps => "Apps",
             Page::Upgrades => "Updates",
+            Page::Privacy => "Privacy",
             Page::Startup => "Startup apps",
             Page::Gaming => "Gaming",
             Page::GameMode => "Game Mode",
@@ -48,6 +59,7 @@ impl Page {
             Page::Cleaner => icon::BROOM,
             Page::Apps => icon::APPS,
             Page::Upgrades => icon::UPDATE,
+            Page::Privacy => icon::SHIELD,
             Page::Startup => icon::POWER,
             Page::Gaming => icon::SPEED,
             Page::GameMode => icon::GAME,
@@ -95,6 +107,8 @@ pub enum Action {
     /// Swap in the verified update and restart.
     InstallUpdate,
     UpdateApps(Vec<AppUpdate>),
+    /// Fresh installs from Apps > Get apps.
+    InstallApps(Vec<AppUpdate>),
     /// Restore point first, then download and install these drivers from Windows Update.
     InstallDrivers(Vec<DriverUpdate>),
 }
@@ -123,6 +137,13 @@ pub struct CleanerState {
     /// None until the large-files search has run once.
     pub large: Option<Vec<(std::path::PathBuf, u64)>>,
     pub large_job: Job<Vec<(std::path::PathBuf, u64)>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum AppsTab {
+    #[default]
+    Installed,
+    Get,
 }
 
 #[derive(Clone, Copy, PartialEq, Default)]
@@ -156,6 +177,12 @@ pub struct AppsState {
     pub sort: SortBy,
     pub optional_only: bool,
     pub loaded: bool,
+    pub tab: AppsTab,
+    /// Get apps: the search box, its results (None before a search) and the ids ticked for installing.
+    pub get_query: String,
+    pub get_results: Option<Vec<AppUpdate>>,
+    pub get_job: Job<Result<Vec<AppUpdate>, String>>,
+    pub get_selected: std::collections::HashSet<String>,
 }
 
 #[derive(Default)]
@@ -357,4 +384,8 @@ pub struct UpgradeState {
     pub wu_paused: Option<String>,
     /// Weeks chosen for "Pause for" (1, 2 or 5).
     pub pause_weeks: u64,
+    /// The running queue installs new apps (Get apps) rather than updating.
+    pub new_installs: bool,
+    /// Updates hidden by "Skip this version" in the last check.
+    pub skipped: usize,
 }

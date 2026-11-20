@@ -1,10 +1,16 @@
 # Changelog
 
+## 0.15.0: Control
+- **Privacy (new page):** seven switches for Windows features that share your data or show promotions: the advertising ID, tailored experiences, your language list for websites, tips and suggestions (in Settings, while using Windows, setup prompts and lock-screen tips), Start recommendations, inking and typing personalization, and online speech recognition. They're the same per-user values as the switches in Settings, so no administrator rights are needed. Each original value is saved first; Revert and Restore everything put it back. Privacy settings are never part of a preset or Optimize PC.
+- **Get apps (Apps page):** search the winget catalog, or pick from popular gaming and everyday apps (Steam, Epic, EA app, Ubisoft Connect, Battle.net, GOG GALAXY, Discord, OBS Studio, and more). Install one or tick several; they install one after another with one confirmation, and winget checks each installer's hash.
+- **App updates:** Skip hides one version of an app (a newer one shows again; "Show again" brings skipped ones back). When Kestrel runs as administrator, a note explains that some installers refuse to run that way.
+- Fixed: failed app updates showed a garbled symbol instead of ✖ in their summary.
+
 ## 0.14.0: Health and space
 Based on new research into all-in-one tools (see ROADMAP.md).
 - **Drive health (new status check):** each drive's own health report, without administrator rights. NVMe drives show temperature, how much of their rated life is used, hours powered on, and any critical warning or data errors (the same data as Settings > Storage > Disks & volumes); SATA drives show their built-in failure prediction. A drive in trouble is flagged with a reminder to back up.
 - **Deep cleanup (Cleanup, administrator):** two new categories, both off by default and both using Windows' own tools:
-  - **Previous Windows installation:** Windows.old, often 10â€“30 GB after a feature update, removed through Disk Cleanup's own handler. After this you can't go back to the previous Windows version.
+  - **Previous Windows installation:** Windows.old, often 10–30 GB after a feature update, removed through Disk Cleanup's own handler. After this you can't go back to the previous Windows version.
   - **Old Windows update components:** superseded components, cleaned with DISM's component cleanup; the space freed is measured afterwards. Installed updates can no longer be uninstalled.
 - **Pause Windows Update (Updates page, administrator):** pause for 1, 2 or 5 weeks before a match or a busy week, and resume when you like. It's the same pause as Settings > Windows Update, so it shows there and can be resumed there too. Kestrel never disables updates.
 - **About this PC (Settings):** Windows version and build, processor, memory and its speed, graphics and driver, displays and refresh rates, and drives, with Copy for support forums.

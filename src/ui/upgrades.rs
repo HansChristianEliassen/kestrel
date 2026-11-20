@@ -7,11 +7,12 @@ use std::sync::atomic::Ordering::Relaxed;
 use eframe::egui::{vec2, Label, RichText, Ui};
 
 use super::components::*;
+use crate::app::state::UpgradeState;
 use crate::app::state::{Action, Confirm};
 use crate::app::App;
 use crate::optimizer::health::{driver_age, gpu_vendor};
 use crate::system::{open_uri, relaunch_as_admin};
-use crate::upgrade::apps::AppUpdate;
+use crate::upgrade::apps::{AppUpdate, POPULAR};
 use crate::upgrade::drivers::DriverUpdate;
 
 fn plural(n: usize, one: &str) -> String {
@@ -46,6 +47,49 @@ fn drivers_confirm(drivers: Vec<DriverUpdate>) -> Confirm {
     }
 }
 
+/// Progress of the winget queue (updates or Get apps installs), with "Cancel the rest".
+fn queue_bar(ui: &mut Ui, up: &UpgradeState) {
+    let i = up.queue_pos.load(Relaxed);
+    let name = up.queue.get(i).cloned().unwrap_or_default();
+    let verb = if up.new_installs { "Installing" } else { "Updating" };
+    let text = if up.queue.len() > 1 {
+        format!("{verb} {} of {}: {name}. Installers may ask for administrator rights.", i + 1, up.queue.len())
+    } else {
+        format!("{verb} {name}. Its installer may ask for administrator rights.")
+    };
+    let more = up.queue.len() > i + 1 && !up.cancel_queue.load(Relaxed);
+    info_bar(ui, Status::Neutral, &text, |ui| {
+        if more && row_button(ui, true, "Cancel the rest").on_hover_text("No more apps start after this one.").clicked() {
+            up.cancel_queue.store(true, Relaxed);
+        }
+    });
+    ui.add_space(S2);
+}
+
+/// Some installers (Spotify, for one) refuse to run as administrator. Returns whether the note was shown.
+fn admin_note(ui: &mut Ui, admin: bool) -> bool {
+    if admin {
+        info_bar(
+            ui,
+            Status::Caution,
+            "Kestrel is running as administrator. Some app installers refuse to run that way; if one fails, open Kestrel normally and try again.",
+            |_| {},
+        );
+    }
+    admin
+}
+
+fn install_confirm(apps: Vec<AppUpdate>) -> Confirm {
+    let how = "winget downloads each installer from its publisher, checks it against the hash in the winget catalog and installs it silently. Installing accepts each package's license. If an installer needs administrator rights, Windows asks.";
+    let (title, body) = if let [a] = &apps[..] {
+        (format!("Install {}?", a.name), format!("{} ({})\n\n{how}", a.name, a.id))
+    } else {
+        let list: Vec<String> = apps.iter().map(|a| format!("• {} ({})", a.name, a.id)).collect();
+        (format!("Install {} apps?", apps.len()), format!("{}\n\nThey install one after another. {how}", list.join("\n")))
+    };
+    Confirm { title, body, warning: None, ok: "Install", action: Action::InstallApps(apps) }
+}
+
 /// A ticked/unticked change from a row's checkbox.
 fn tick(ui: &mut Ui, selected: &HashSet<String>, id: &str, enabled: bool, toggled: &mut Option<(String, bool)>) {
     let mut on = selected.contains(id);
@@ -63,6 +107,97 @@ fn apply_tick(set: &mut HashSet<String>, toggled: Option<(String, bool)>) {
 }
 
 impl App {
+    /// Apps > Get apps: search the winget catalog, or pick from a short list of popular apps, and install.
+    pub(crate) fn get_apps_tab(&mut self, ui: &mut Ui) {
+        let busy = self.upgrades.install.running();
+        let searching = self.apps.get_job.running();
+        if busy && self.upgrades.new_installs {
+            queue_bar(ui, &self.upgrades);
+        }
+        admin_note(ui, self.admin);
+        let mut search = false;
+        ui.add_space(S2);
+        ui.horizontal(|ui| {
+            let r = search_box(ui, &mut self.apps.get_query, "Search for an app, like Steam or Discord", 320.0);
+            search = r.lost_focus() && ui.input(|i| i.key_pressed(eframe::egui::Key::Enter));
+            search |= button(ui, !searching && !self.apps.get_query.trim().is_empty(), "Search").clicked();
+            if searching {
+                progress(ui, "Searching the winget catalog…");
+            }
+        });
+        if search && !searching {
+            let q = self.apps.get_query.clone();
+            self.apps.get_job.start(ui.ctx(), move || crate::upgrade::apps::search(&q));
+        }
+        let popular: Vec<AppUpdate> = POPULAR
+            .iter()
+            .map(|(name, id)| AppUpdate { name: (*name).into(), id: (*id).into(), current: String::new(), available: String::new() })
+            .collect();
+        let st = &mut self.apps;
+        let mut target: Option<Vec<AppUpdate>> = None;
+        let mut toggled = None;
+        let mut bulk = false;
+        if !st.get_selected.is_empty() && !busy {
+            ui.add_space(S2);
+            info_bar(ui, Status::Neutral, &format!("{} selected.", plural(st.get_selected.len(), "app")), |ui| {
+                bulk = row_button(ui, true, "Install selected").clicked();
+                if row_button(ui, true, "Clear").clicked() {
+                    st.get_selected.clear();
+                }
+            });
+        }
+        let lists: Vec<(String, &Vec<AppUpdate>)> = match &st.get_results {
+            Some(r) => vec![(format!("Results for \u{201c}{}\u{201d}", st.get_query.trim()), r), ("Popular".into(), &popular)],
+            None => vec![("Popular".into(), &popular)],
+        };
+        for (title, list) in lists {
+            section(ui, &title, |_| {});
+            group(ui, |ui| {
+                if list.is_empty() {
+                    empty_state(ui, "No apps found", "Try another name. Only apps in the winget catalog can be installed from here.");
+                }
+                for (i, app) in list.iter().enumerate() {
+                    row(ui, i, |ui| {
+                        ui.horizontal(|ui| {
+                            tick(ui, &st.get_selected, &app.id, !busy, &mut toggled);
+                            ui.allocate_ui(vec2((ui.available_width() - 120.0).max(80.0), 20.0), |ui| {
+                                ui.add(Label::new(RichText::new(&app.name).color(TEXT)).truncate());
+                                caption(
+                                    ui,
+                                    if app.available.is_empty() { app.id.clone() } else { format!("{} · {}", app.id, app.available) },
+                                );
+                            });
+                            ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                                if row_button(ui, !busy, "Install")
+                                    .on_disabled_hover_text("Wait for the current installs to finish.")
+                                    .clicked()
+                                {
+                                    target = Some(vec![app.clone()]);
+                                }
+                            });
+                        });
+                    });
+                }
+            });
+        }
+        ui.add_space(S2);
+        caption(ui, "Apps come from the winget catalog, Windows' own package manager. Each installer is checked against the catalog's hash before it runs.");
+        if bulk {
+            let all = st.get_results.iter().flatten().chain(popular.iter());
+            let mut picked: Vec<AppUpdate> = Vec::new();
+            for a in all {
+                if st.get_selected.contains(&a.id) && !picked.iter().any(|p| p.id == a.id) {
+                    picked.push(a.clone());
+                }
+            }
+            target = (!picked.is_empty()).then_some(picked);
+        }
+        apply_tick(&mut st.get_selected, toggled);
+        if let Some(apps) = target {
+            self.confirm = Some(install_confirm(apps));
+        }
+    }
+
     pub(crate) fn upgrades_page(&mut self, ui: &mut Ui) {
         page_header(
             ui,
@@ -145,23 +280,9 @@ impl App {
             }
         });
         if installing {
-            let i = up.queue_pos.load(Relaxed);
-            let name = up.queue.get(i).cloned().unwrap_or_default();
-            let text = if up.queue.len() > 1 {
-                format!("Updating {} of {}: {name}. Installers may ask for administrator rights.", i + 1, up.queue.len())
-            } else {
-                format!("Updating {name}. Its installer may ask for administrator rights.")
-            };
-            let more = up.queue.len() > i + 1 && !up.cancel_queue.load(Relaxed);
-            let mut cancel = false;
-            info_bar(ui, Status::Neutral, &text, |ui| {
-                if more {
-                    cancel = row_button(ui, true, "Cancel the rest").on_hover_text("No more updates start after this one.").clicked();
-                }
-            });
-            if cancel {
-                up.cancel_queue.store(true, Relaxed);
-            }
+            queue_bar(ui, up);
+        }
+        if admin_note(ui, self.admin) {
             ui.add_space(S2);
         }
         let mut bulk = false;
@@ -175,6 +296,7 @@ impl App {
             ui.add_space(S2);
         }
         let mut target: Option<Vec<AppUpdate>> = None;
+        let mut skip: Option<AppUpdate> = None;
         let mut toggled = None;
         group(ui, |ui| match &up.apps {
             None if checking => row(ui, 0, |ui| progress(ui, "Asking winget which apps have a newer version…")),
@@ -192,7 +314,7 @@ impl App {
             }
             Some(list) => {
                 const VERSION: f32 = 150.0;
-                const ACTION: f32 = 80.0;
+                const ACTION: f32 = 140.0;
                 table_header(ui, &[("Name", 0.0, false), ("Installed", VERSION, false), ("Available", VERSION, false), ("", ACTION, true)]);
                 for (i, app) in list.iter().enumerate() {
                     row(ui, i + 1, |ui| {
@@ -211,6 +333,9 @@ impl App {
                                 if row_button(ui, !busy, "Update").clicked() {
                                     target = Some(vec![app.clone()]);
                                 }
+                                if row_button(ui, !busy, "Skip").on_hover_text("Hide this version. A newer one shows again.").clicked() {
+                                    skip = Some(app.clone());
+                                }
                             });
                         });
                     });
@@ -224,6 +349,31 @@ impl App {
                 open_uri("ms-windows-store://downloadsandupdates");
             }
         });
+        let mut unskip = false;
+        if up.skipped > 0 {
+            ui.horizontal(|ui| {
+                caption(ui, format!("{} skipped.", plural(up.skipped, "update")));
+                unskip = link(ui, "Show again").clicked();
+            });
+        }
+        if let Some(app) = skip {
+            match crate::upgrade::apps::skip(&app) {
+                Ok(()) => {
+                    up.apps_selected.remove(&app.id);
+                    if let Some(list) = &mut up.apps {
+                        list.retain(|a| a.id != app.id);
+                    }
+                    up.skipped += 1;
+                }
+                Err(e) => self.show_error("Skip", e),
+            }
+            return;
+        }
+        if unskip {
+            crate::upgrade::apps::unskip_all();
+            up.skipped = 0;
+            check = true;
+        }
         apply_tick(&mut up.apps_selected, toggled);
         if let Some(list) = &up.apps {
             if all {
