@@ -14,7 +14,7 @@ use windows::Win32::Storage::FileSystem::{
 };
 
 use super::scanner::{Category, Kind, Scanned, REPARSE_POINT};
-use crate::system::{empty_recycle_bin, powershell};
+use crate::system::{empty_recycle_bin, env_path, powershell, run_hidden};
 use crate::ui::fmt_bytes;
 
 const DELETE: u32 = 0x0001_0000;
@@ -78,6 +78,8 @@ impl Report {
                 fmt_bytes(self.freed),
                 self.skipped
             ),
+            // Measured cleanups (DISM) free space without a file count.
+            None if self.deleted == 0 && self.freed > 0 => format!("{}: freed {}", self.name, fmt_bytes(self.freed)),
             None => format!("{}: removed {} items ({})", self.name, self.deleted, fmt_bytes(self.freed)),
         }
     }
@@ -110,8 +112,50 @@ pub fn clean(cat: &Category, found: &Scanned) -> Report {
             Ok(_) => (r.deleted, r.freed) = (found.count, found.bytes),
             Err(e) => r.error = Some(e),
         },
+        Kind::PreviousWindows if found.count == 0 => {}
+        Kind::PreviousWindows => match disk_cleanup("Previous Installations") {
+            Ok(()) if found.roots.iter().all(|p| !p.exists()) => (r.deleted, r.freed) = (found.count, found.bytes),
+            Ok(()) => r.error = Some("Disk Cleanup finished, but Windows.old is still there.".into()),
+            Err(e) => r.error = Some(e),
+        },
+        Kind::ComponentStore if found.count == 0 => {}
+        Kind::ComponentStore => {
+            let before = free_space();
+            match run_hidden("dism.exe", &["/Online", "/Cleanup-Image", "/StartComponentCleanup", "/English"]) {
+                Ok(_) => r.freed = free_space().saturating_sub(before),
+                Err(e) => r.error = Some(e.lines().rev().find(|l| l.contains("Error") || l.contains(':')).unwrap_or(&e).trim().to_string()),
+            }
+        }
     }
     r
+}
+
+/// Free bytes on the system drive.
+fn free_space() -> u64 {
+    let root = crate::system::wide(&format!("{}\\", env_path("SystemDrive").display()));
+    let mut free = 0u64;
+    let _ = unsafe {
+        windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(windows::core::PCWSTR(root.as_ptr()), Some(&mut free), None, None)
+    };
+    free
+}
+
+/// Runs one of Disk Cleanup's own handlers silently (cleanmgr /sagerun), the supported way to remove what it manages.
+/// The handler is ticked under a Kestrel-only preset number and unticked again afterwards.
+fn disk_cleanup(handler: &str) -> Result<(), String> {
+    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_SET_VALUE};
+    const PRESET: &str = "StateFlags0042";
+    let key = winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags(format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\{handler}"), KEY_SET_VALUE)
+        .map_err(|e| format!("Disk Cleanup isn't available ({e})."))?;
+    key.set_value(PRESET, &2u32).map_err(|e| e.to_string())?;
+    let result = std::process::Command::new("cleanmgr.exe").arg("/sagerun:42").status();
+    let _ = key.delete_value(PRESET);
+    match result {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(format!("Disk Cleanup stopped with code {}.", s.code().unwrap_or(-1))),
+        Err(e) => Err(format!("Couldn't start Disk Cleanup: {e}")),
+    }
 }
 
 #[cfg(test)]

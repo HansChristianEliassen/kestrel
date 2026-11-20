@@ -1,122 +1,107 @@
-# Kestrel review and roadmap (research only, nothing implemented)
+# Kestrel roadmap: what to add and improve next (research, November 2026)
 
-Effort scale: **S** ≈ under a day, **M** ≈ 1–3 days, **L** ≈ a week.
-Evidence scale: **Documented** (Microsoft documents it), **Measured** (independent, repeatable results), **Plausible** (the mechanism is sound but the gain varies), **Weak** (vendor claims only).
+0.14 implements the "Health and space" release below. The previous roadmap (most of it now shipped) is in git history.
 
-## 1. Where Kestrel stands
+## Context
+You asked which features to add or improve to make Kestrel a true all-in-one tool for Windows gaming, optimizing and management. I compared Kestrel 0.13 against the tools people combine today:
+- **Maintenance:** Microsoft PC Manager, CCleaner, Advanced SystemCare.
+- **Tweaks:** WinUtil (Chris Titus), O&O ShutUp10++ (privacy).
+- **Apps:** UniGetUI (winget front end).
+- **Gaming:** NVIDIA App, Razer Cortex, Process Lasso, Playnite (game library), Intel PresentMon (frame-time measurement).
+- **Disks:** WizTree (disk usage), CrystalDiskInfo (drive health).
 
-**Strengths**
-- Every change is opt-in: a preview and confirmation come first, and the original value is saved before the first change, with per-tweak Revert and Restore all.
-- The tweak set is small and honest. Each tweak shows a benefit and a drawback, and the status detection reads the real setting.
-- The cleaner never follows links, skips locked files and each app's cache while that app is running, and deletes only the files from the scan.
-- The uninstaller always runs the vendor's own uninstaller, and drivers, anti-cheat and runtimes are protected.
-- One ~4 MB exe with no service, telemetry or network access, and 0% CPU when idle.
+COMPETITORS.md (0.11) already covered the boosters. Most of the old ROADMAP.md is done (safe delete, per-game hub, GPU/overlay/storage checks, native Store API, bulk uninstall, updates).
 
-**Weaknesses found in the code**
-1. **Security (high).** When run as administrator, the cleaner deletes by path in folders that standard users can write to (`C:\Windows\Temp`, `ProgramData\…\WER`). The reparse check happens right before `remove_file`, but a parent folder can be swapped for a junction in between. That is the same bug class as the published junction/link-following privilege-escalation CVEs in CCleaner, Trend Micro Cleaner One, Malwarebytes AdwCleaner and Windows' own Disk Cleanup.
-2. **Misleading "Active" status.** "Limit background Store apps" shows *Active* on your Windows 11 build 26200 because the registry value is set, but Microsoft removed the global toggle from Windows 11, and current guides only cite the value without confirming it still works. "Optimizations for windowed games" does nothing on Windows 10. Status should mean "takes effect", not just "value is written".
-3. **Restore all is incomplete.** It doesn't cover startup changes, per-game settings or a kept refresh-rate change.
-4. **Uninstall result is often wrong.** NSIS and Inno uninstallers copy themselves to a temp folder and exit straight away, so Kestrel reports "still installed" while the real uninstall is still running.
-5. **Heavy use of PowerShell.** The Store app list, RAM check, Delivery Optimization cleanup and restore point each start `powershell.exe` (0.5–1.5 s each). These calls fail if PowerShell is blocked or locked down by policy, and the error text is whatever PowerShell prints.
-6. **The startup list misses scheduled tasks.** Many updaters and launchers (Adobe, Google, Edge, OEM tools) start through logon tasks. Shortcut entries show "Unknown publisher" because the shortcut target isn't resolved.
-7. **Per-game settings need a pasted path.** There's no file picker and no detection of installed games.
-8. **UI.** The Gaming page is one very long scroll. The sidebar has no visible keyboard focus. The Optimize PC dialog doesn't include the health-check fixes.
-9. **Build.** Four crates are pinned to old versions only to make the minimal GNU toolchain link, and the `winreg` crate duplicates what `windows` (already a dependency, with its Registry feature on) provides.
+**Where Kestrel stands:** the honest-optimizer part is strong and rare. A user still needs other tools for:
+- disk health and what fills the disk;
+- privacy settings;
+- installing apps;
+- pausing Windows Update before a match;
+- proving whether a change helped.
 
-## 2. Prioritized new features
+Those gaps are what make other apps "all-in-one".
 
-### High priority (must have)
-| # | Feature | Why | Evidence | Effort |
+The guiding rules stay:
+- every change is opt-in, previewed and reversible;
+- nothing runs in the background;
+- no FPS promises;
+- Windows' own documented mechanisms only.
+
+## New features (ranked)
+
+| # | Feature | What it does | Fits Kestrel because | Effort |
 |---|---|---|---|---|
-| H1 | **Handle-based safe delete** | Fixes weakness 1. Open each file with `FILE_FLAG_OPEN_REPARSE_POINT`, check `GetFinalPathNameByHandleW` is still inside the scanned folder, then delete through the open handle (`SetFileInformationByHandle` with `FILE_DISPOSITION_INFO_EX`). | Documented APIs; the bug class is proven by the CVEs below | M |
-| H2 | **Version-aware tweaks** | Read the Windows build with `RtlGetVersion`. Each tweak declares where it works, and the UI shows "Not supported on this Windows version" instead of a false *Active*. Re-verify or retire "Limit background Store apps". | Documented | S |
-| H3 | **"Reverted by Windows" detection** | If a backup exists but the setting is no longer active, Windows Update or another app changed it back. Show this with a one-click reapply. | Documented (Kestrel reads the live value) | S |
-| H4 | **Per-game hub** | Detect installed games from Steam (`libraryfolders.vdf` + `appmanifest_*.acf`), Epic (`ProgramData\Epic\…\Manifests\*.item`) and GOG (registry), plus a native file picker (`IFileOpenDialog`). One card per game: high-performance GPU, fullscreen optimizations, opting the game out of windowed-game optimizations, and a "used by Kestrel" summary. This replaces pasting paths. | Documented per-game Windows settings | M–L |
-| H5 | **Reliable uninstall result** | After the uninstaller exits, keep checking every 2 s for the app's registry entry to disappear, with a "Still uninstalling… / Stop waiting" state. | Documented registry behavior | S |
-| H6 | **Startup tasks and shortcut targets** | List logon-triggered scheduled tasks through Task Scheduler's COM interface (`ITaskService`) and allow enabling/disabling them, which is reversible. Resolve `.lnk` targets with `IShellLinkW` to show publishers. | Documented | M |
-| H7 | **Replace PowerShell with native APIs** | Store apps through the WinRT `PackageManager` (`FindPackagesForUser`, `RemovePackageAsync`), which also gives display names and install folders for sizes. RAM speed from SMBIOS (`GetSystemFirmwareTable('RSMB')`, type 17). Keep PowerShell only for `Checkpoint-Computer`. | Documented | M |
-| H8 | **GPU driver age check** | Read-only: GPU name, driver version and date (SetupAPI `DEVPKEY_Device_DriverDate`, or WMI over COM), with a link to the vendor. An old driver is one of the most common real causes of poor game performance. | Plausible to measured, depending on the game | S–M |
+| 1 | **Drive health** (Status check + Gaming health) | Per drive: health, temperature, SSD wear ("percentage used"), media errors, power-on hours. | Read-only, and fixes a real cause of stutter and data loss (CrystalDiskInfo is the usual separate install). Windows exposes it natively: the NVMe health log through `IOCTL_STORAGE_QUERY_PROPERTY` (protocol-specific) and `IOCTL_STORAGE_PREDICT_FAILURE` for SATA. No admin for most drives. | M |
+| 2 | **Deep cleanup: Windows.old + component store** | Adds a "Previous Windows installation" category (often 10–30 GB after a feature update) and "Windows component store cleanup" through `DISM /StartComponentCleanup`, Microsoft's supported method. | The biggest space wins after a feature update. Both are supported methods (Disk Cleanup does the same). Admin, preview and confirm. | M |
+| 3 | **Privacy settings** (new Gaming-page tab or a Settings-style page) | About 10 documented, reversible toggles: advertising ID, tailored experiences, diagnostic data to Required, activity history, Start/lock-screen suggestions, Bing results in Start search, Copilot, Recall snapshots. | ShutUp10++-style control is expected in an all-in-one tool. It reuses the existing Tweak + backup + Revert system exactly, and is labeled as privacy, never as performance. | M |
+| 4 | **Measure a game (before/after)** | Click Measure, play 60 s, and get average FPS, 1% lows and frame-time stability. Compare runs before and after a change. | The honest answer to boosters' FPS claims: users see real numbers from their own PC. Built on Intel PresentMon (MIT licensed, the industry standard); Kestrel uses it as a tool, not its own capture. Open choice: install PresentMon via winget on first use (recommended, keeps one exe), or bundle it. | L |
+| 5 | **App installer ("Get apps")** | Search the winget catalog and install. A curated "New PC" list (Steam, Discord, Epic, 7-Zip, browsers…) with tick-and-install-all. | WinUtil's most-used tab. Reuses 0.13's winget queue, confirmation and id validation. | M |
+| 6 | **Pause Windows Update** | "Pause updates for 1 / 2 / 5 weeks" and "Resume", using the same values Settings > Windows Update writes, so the user can avoid a surprise restart or download before a tournament. Shows the active hours. | Documented and reversible, no service changes. Unlike WinUtil, Kestrel never disables or blocks updates. | S |
+| 7 | **Play from Kestrel** | A Play button on each detected game (Gaming > Games): it turns on Game Mode with that game's profile, then starts the game through its launcher URI (`steam://rungameid/…`, Epic, etc.). | Kestrel already detects games and profiles. Playnite-style launching without a resident watcher. | S–M |
+| 8 | **Disk usage map** (Cleanup > Large files) | "What's using space": the largest folders per drive (including game folders), drill-down, Show in folder. | WizTree-style insight. Read-only. A folder walk first; reading the NTFS MFT directly is the faster upgrade later. | M |
+| 9 | **System summary** (Settings > About this PC, or the Overview) | CPU, GPU and driver, RAM and speed, drives, displays and refresh, Windows build, with Copy for support forums. | Kestrel reads all of this already; it just isn't shown together. Helps "can I run it" and troubleshooting. | S |
 
-### Medium priority (worth adding)
-| # | Feature | Why | Evidence | Effort |
-|---|---|---|---|---|
-| M1 | **Overlay and conflict check** (read-only) | Shows which overlays and boosters are active (Discord, Steam, NVIDIA, Game Bar, RTSS/Afterburner, Overwolf, other "boosters"), with a note that overlays hook into games and that two optimizers can undo each other. Report only. | Plausible; anti-cheat conflicts are documented by game publishers | S–M |
-| M2 | **Storage checks** | Flags game libraries on a hard drive (`IOCTL_STORAGE_QUERY_PROPERTY` seek-penalty check) and drives with under ~10% free space. Optional DirectStorage readiness check (NVMe + Windows 11). | Measured (HDD load and stream stutter) | S–M |
-| M3 | **Better Optimize PC** | Include health-check fixes (refresh rate, with the 15-second keep-or-revert), restore point ticked when running as admin, the benefit and drawback shown inline, and a count of settings already active. | n/a (UX) | S |
-| M4 | **Restore all that's complete, plus export/import** | Restore all also covers startup, per-game and display changes. Export and import a plain-text profile of tweaks and per-game settings. | n/a (safety) | S–M |
-| M5 | **Bulk optional-app removal** | Tick several preinstalled Store apps and remove them in one previewed batch. Optionally (as admin, with a warning) also remove the provisioned copy so new user accounts don't get it. | Documented (`Remove-AppxProvisionedPackage` / `PackageManager.DeprovisionPackageForAllUsersAsync`) | M |
-| M6 | **Graphics status: VRR and Auto HDR** | Show the state of the global variable-refresh-rate and Auto HDR settings, which live in the same `DirectXUserGlobalSettings` value Kestrel already handles, with a Settings link. Check the exact value names on a Windows 11 test machine before adding toggles. | Documented feature; the registry names are community-verified | S |
-| M7 | **Delivery Optimization upload off** | "Allow downloads from other PCs" uploads update data to other PCs, using your upload bandwidth during play. Settings-backed and reversible; needs admin. | Documented setting | S |
-| M8 | **Cleaner: supported deep cleanup** | Component store analysis and cleanup through `DISM /Online /Cleanup-Image /AnalyzeComponentStore` and `/StartComponentCleanup` (Microsoft's supported method). GPU driver installer leftovers (`C:\NVIDIA`, `C:\AMD`), only when older than 7 days and no installer is running. | Documented (DISM); plausible (leftovers) | M |
-| M9 | **Faster scan, less memory** | Scan categories in parallel with `std::thread::scope`, which adds no dependency. | n/a | S |
-| M10 | **Fewer dependencies, cleaner build** | Replace `winreg` with `windows` registry calls; recommend the MSVC toolchain and drop the GNU-only version pins. Add a manifest, version info and icon (`.rc` via a build script), and a single-instance mutex so two Kestrel windows can't fight over the backup file. | n/a | S–M |
+## Improvements to existing features
+- **Updates page:**
+  - **Skip this version / Ignore app**, as in UniGetUI.
+  - When Kestrel runs as administrator, warn before updating apps that installers may refuse (the error you hit).
+  - Warn when an app being updated is open ("Spotify is running and will close").
+  - Show the last check's update counts on the Overview.
+- **Optimize PC:** add the new findings as review-only items (drive health warnings, Windows.old size, a pending update restart).
+- **Startup apps:** show each app's startup impact where Windows records it, and sort by impact.
+- **Game Mode:** per-game profiles from the Play button (feature 7). Show "Game Mode on: <game>" in the tray tooltip.
+- **Distribution (high value, outside the code):**
+  - **Code-sign the exe** (Azure Trusted Signing, about $10/month) so SmartScreen stops warning. This is the biggest barrier to new users.
+  - **Publish Kestrel to winget** (`winget install Kestrel`), a small manifest PR to winget-pkgs.
 
-### Low priority (optional)
-| # | Feature | Notes | Effort |
-|---|---|---|---|
-| L1 | "Before you play" | Closes apps you pick (browser, launchers) politely with `WM_CLOSE`, as a one-off action with no background watcher. Helps mainly on 8–16 GB RAM PCs. | S–M |
-| L2 | Memory integrity and Virtual Machine Platform guidance | Microsoft's own gaming article says turning these off can help, while warning about the security cost. Keep it to status, explanation and links; never toggle them. | S |
-| L3 | Network status check | Ethernet vs. Wi-Fi, Wi-Fi band and link speed, read-only. No "tweaks". | S |
-| L4 | Notifications while gaming | Check that Windows' "Do not disturb when playing a game" rule is on. | S |
-| L5 | Undo from the history page | Each history entry gets its own undo where possible. | M |
-| L6 | Input polling tester | Measures mouse or controller report rate with Raw Input, started by the user. A useful diagnostic, not an optimization. | M |
+## Researched and rejected (consistent with COMPETITORS.md)
+- **Third-party driver updaters and driver cleaners (DDU):** mismatched drivers, and a high risk if run wrongly.
+- **Disabling Windows Update entirely, removing Edge, aggressive debloat or stopping services:** documented breakage, with security costs.
+- **GPU overclocking or undervolting (Afterburner):** a hardware risk, and the vendor apps do it.
+- **CPU/GPU temperature monitoring:** needs a kernel driver (WinRing0 has known vulnerabilities). GPU temperatures could come later from NVAPI/ADL, but are out of scope now.
+- **Turning off memory integrity (VBS) automatically:** keep the current status and explanation only. The gain is real in CPU-bound games, but it's a security trade-off the user must make in Windows Security.
+- **Process Lasso-style resident ProBalance and scheduled background maintenance:** both need a background process. Game Mode's efficiency mode covers the gaming case.
 
-## 3. Improvements to existing features
-- **Interface:** split the Gaming page into *Settings / Health / Per-game* tabs; add evidence labels ("Documented", "Cosmetic", "Varies"); show "Admin needed" and "Restart needed" labels; paint a keyboard-focus outline on the sidebar items.
-- **Scan speed:** parallel scanning (M9); drop the PowerShell calls (H7). The first Apps load should go from about 1.5 s to under 0.3 s.
-- **Exe size and memory:** 4.3 MB is fine. Most of the ~85 MB of memory is the OpenGL driver rather than Kestrel. Switching to wgpu would be heavier, so leave it as is.
-- **Error handling:** turn HRESULT and `DISP_CHANGE` codes into plain sentences, and tell "UAC prompt declined" apart from a real failure.
-- **Cleanup safety:** H1; also never delete files with both hidden and system attributes outside known cache folders, and store a per-category file limit in the scan result.
-- **Compatibility:** H2; test on Windows 10 22H2 and Windows 11 23H2 and later; the USB suspend setting only applies to the active power plan (document this, or apply it to the High performance plan too when both are chosen).
-- **Restore:** M4; save the Windows build number and date with each backup, and warn if a backup is from an older Windows build.
+## Proposed next release (0.14): "Health and space"
+Features **1 drive health**, **2 deep cleanup**, **6 pause Windows Update** and **9 system summary**:
+- all read-only or using Windows' own supported methods;
+- each S–M effort;
+- no new dependencies;
+- together they fill the biggest "still need another app" gaps.
 
-## 4. Ideas taken from HDOpti and others
-| Source | Idea | What Kestrel should do |
-|---|---|---|
-| HDOpti | Restore point on the dashboard; heat icons on tweaks | Done; a drawback line already covers heat. |
-| HDOpti | Game configs and a per-game "Game Mode" | Use the per-game hub (H4) with Windows' own per-app settings, not in-game config files that break with every patch. |
-| HDOpti | USB tester and polling tester | L6, as a diagnostic only. |
-| WinUtil (Chris Titus) | Restore point before tweaks; tweak groups with an "Advanced – CAUTION" level; feature installs | The caution level is a good idea, so use evidence labels. Skip the service-disabling and Edge-removal tweaks. |
-| Razer Cortex | Booster that restores the PC after a game session | L1 without a resident watcher. Its own reviews describe the gains as small. |
-| Hone | Persistent tweaks with a paid tier; network/TCP "optimization" | Persistence plus *revert detection* (H3) is the useful part; the network claims are vendor-only (see section 5). |
-| Windows Settings | Per-game graphics, VRR, Auto HDR | H4 and M6 bring these together in one place. |
+Then:
+- **0.15 "Control":** 3 privacy, 5 get apps, Updates improvements.
+- **0.16 "Proof":** 4 measure a game, 7 play from Kestrel, 8 disk usage map.
 
-## 5. Features to avoid
-| Feature | Why |
-|---|---|
-| TCP and Nagle tweaks (`TcpAckFrequency`, `TCPNoDelay`), `NetworkThrottlingIndex`, `SystemResponsiveness`, "network packs" | Games set their own socket options and mostly use UDP. No independent evidence, and changing these can hurt throughput. |
-| Turning off IPv6 | Microsoft advises against it; Windows is only tested with IPv6 on. |
-| Forcing MSI mode, interrupt affinity or priority | Unsupported per-device registry changes that can break a device or prevent boot; modern drivers already use MSI where supported. |
-| Timer resolution, HPET or `bcdedit` tweaks | Windows 10 2004 and later changed how the global timer works. Results are mixed and machine-specific, and the changes are hard to undo. |
-| Turning off Spectre/Meltdown mitigations or Defender, services or Windows Update | A security cost for small gains, and outside your spec. |
-| Core-parking hacks, CPU affinity or priority changes | HDOpti's own article warns that affinity can make stutter worse; the Windows scheduler handles hybrid CPUs. |
-| RAM cleaners, standby-list purging, prefetch or SysMain off | They undo caches Windows uses to make things faster. |
-| Registry cleaners | No measurable benefit, and they can break things. |
-| NVIDIA Profile Inspector "hidden" flags, Resizable BAR overrides | Undocumented and different in every driver version. |
-| Controller or mouse "overclock" drivers | Need test-signed drivers, which weakens security and can trigger anti-cheat. |
-| Live monitoring, FPS overlays, a resident auto-booster | Outside your spec, and they cost resources while gaming. |
-| "Ultimate Performance" plan as a default | Built for workstations; no gaming gain over High performance on typical PCs and more idle power use. Fine as an informational note only. |
+Code signing and the winget listing can happen anytime.
 
-## 6. How to build these in Rust
-- **Safe delete (H1):** `CreateFileW(path, DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_*, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)`, then `GetFileInformationByHandleEx(FileAttributeTagInfo)` to reject reparse points, then `GetFinalPathNameByHandleW` and check the result starts with the scanned root, then `SetFileInformationByHandle(FileDispositionInfoEx, FILE_DISPOSITION_FLAG_DELETE | POSIX_SEMANTICS)`. All of these are `windows` crate features (`Win32_Storage_FileSystem`). Add a test that creates a junction inside a temp folder and checks that nothing outside it is deleted.
-- **Windows version (H2):** `RtlGetVersion` (`Wdk_System_SystemServices`), or `GetVersionExW` with a manifest that declares Windows 10/11 support. Add a `min_build`/`max_build` to each tweak.
-- **Game libraries (H4):** parse VDF by hand (a few lines: quoted key/value pairs) rather than adding a crate. Epic manifests are JSON, but only `InstallLocation` and `LaunchExecutable` are needed, so a targeted string search avoids a new dependency. File picker: `CoCreateInstance(FileOpenDialog)` with `Win32_UI_Shell_Common`.
-- **Task Scheduler (H6):** `ITaskService::Connect`, then `GetFolder("\\")` and a recursive walk; keep tasks whose triggers include `TASK_TRIGGER_LOGON` or `TASK_TRIGGER_BOOT`; toggle with `IRegisteredTask::put_Enabled`, and record the original value in `backup.txt`.
-- **WinRT (H7):** `windows` crate features `Management_Deployment` and `ApplicationModel`. `PackageManager::FindPackagesByUserSecurityId("")`, `Package::DisplayName`, `InstalledLocation`, and `RemovePackageAsync(..).get()` on the existing worker thread.
-- **SMBIOS RAM (H7):** `GetSystemFirmwareTable(u32::from_be_bytes(*b"RSMB"), 0, ..)`, then walk the structures for type 17 and read Speed (offset 0x15) and Configured Memory Speed (offset 0x20, SMBIOS 2.7 and later). Add a unit test with a captured byte blob.
-- **Keep the structure:** each item goes into the existing modules (`optimizer/health.rs`, `startup/manager.rs`, `uninstaller/`) with a small `#[test]` beside each parser. No new background threads beyond the existing one-shot `Job`.
+**Files for 0.14:**
+- `src/optimizer/health.rs` (new `drive_health()` check, next to `storage()`);
+- `src/cleaner/scanner.rs` + `cleanup.rs` (new `Kind::WindowsOld`, `Kind::ComponentStore` using `run_hidden("dism.exe", …)`);
+- `src/optimizer/tweaks.rs`, or a small settings module, for pause/resume (registry values under `HKLM\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings`, admin);
+- `src/ui/mod.rs` Settings > About this PC.
 
-## 7. Roadmap
-| Release | Contents | Goal |
-|---|---|---|
-| **0.2: Safety and honesty** ✔ done | H1, H2, H3, H5, M4 (complete Restore all; export/import still open) | Nothing can be tricked into deleting the wrong files, and every status is true. |
-| **0.3: Per-game hub** ✔ done | H4 (plus Battle.net, EA, Riot, Ubisoft, Rockstar), M6 as status only, file picker, Gaming page tabs | The most-requested gamer workflow, done with Windows' own settings. |
-| **0.4: Faster and native** ✔ done | H7, H6, M9, single instance from M10. Still open from M10: replacing `winreg` (about 40 call sites for one small crate) and an embedded manifest, icon and version info (needs a resource compiler, which the GNU toolchain here doesn't have) | No PowerShell on hot paths, complete startup coverage. |
-| **0.5: Health and conflicts** ✔ done | H8, M1, M2, M3, L3 | Find the real causes of bad performance (refresh rate, driver, disk, overlays) and fix them from Optimize PC. |
-| **0.6: Game Mode** ✔ done | HDOpti-inspired Game Mode (replaces L1, "before you play"): profiles, per-game profiles, auto-start on game launch, closing listed apps, crash/restart recovery | Temporary gaming changes that always come back. |
-| **0.7: Polish** | M5, M7, M8, export/import (M4), L2, L4–L6; Game Mode follow-ups: optional "reopen closed apps", tray/minimize-to-tray so detection keeps running with the window closed, match games by full path | Nice-to-haves once the core is solid. |
+**Reuse:**
+- `health::gpu_drivers()`, `memory_speed`, `storage()`'s drive enumeration;
+- `system::run_hidden`, `is_admin`, `create_restore_point`;
+- the existing Check / Confirm / Job patterns.
 
-## Bottom line
-- **What's missing:** a per-game hub with game detection, scheduled-task startups, driver/overlay/disk health checks, and version-aware status.
-- **What to fix first:** privileged deletion (a real security bug), false *Active* labels, uninstall-result tracking, and Restore all coverage.
-- **What helps gamers most:** the refresh-rate fix (done), per-game GPU and windowed settings with game detection, driver-age and HDD checks, and an overlay/conflict report. These address common, measurable problems rather than placebo tweaks.
+## Verification (for 0.14)
+- **Unit tests:** the NVMe health-log parser (fixture bytes), DISM output parsing, pause-date math.
+- **Live read-only:** drive health on this PC (NVMe + any SATA), the Windows.old/component store size estimate (`/AnalyzeComponentStore`).
+- **Manual, with your OK:** pause and resume Windows Update, checked in Settings > Windows Update. Component cleanup only if you agree (it is irreversible: it removes superseded Windows component versions, so older updates can no longer be uninstalled).
+- **Final:** debug screenshots of every page, then fmt, clippy, tests and the release build.
+
+## Sources
+- [Microsoft PC Manager overview (Data Doctors)](https://wtop.com/tech/2026/01/data-doctors-should-i-be-using-microsoft-pc-manager), [BetaNews](https://betanews.com/article/microsoft-pc-manager-feels-like-ccleaners-little-brother)
+- [WinUtil in 2026](https://christitus.com/winutil-in-2026/), [WinUtil user guide](https://winutil.christitus.com/guides/)
+- [UniGetUI](https://marticliment.com/wingetui/), [AlternativeTo](https://alternativeto.net/software/wingetui/about)
+- [O&O ShutUp10++ 2.2.1024](https://blog.oo-software.com/en/?p=10855), [2.0.1009](https://blog.oo-software.com/en/?p=10629)
+- [PresentMon releases](https://github.com/GameTechDev/PresentMon/releases), [PresentMon 2.0 (Neowin)](https://www.neowin.net/news/intel-presentmon-gets-updated-to-version-200-brings-new-features-and-optimizations/)
+- [NVIDIA App features](https://www.nvidia.com/en-us//geforce/news/nvidia-app-download-and-features), [NVIDIA overlay CPU stats (TechSpot)](https://www.techspot.com/news/113811-nvidia-app-adds-cpu-temperature-power-monitoring-overlay.html)
+- [Process Lasso gaming docs](https://bitsum.com/docs/pl/gaming/)
+- [Playnite](https://playnite.link), [comparison](https://api.playnite.link/docs/manual/gettingStarted/comparisonWithOtherSoftware.html)
+- [WizTree](https://diskanalyzer.com/about)
+- [CrystalDiskInfo / SSD health (TweakTown)](https://www.tweaktown.com/guides/11407/your-ssd-is-telling-you-its-about-to-die-heres-how-to-listen/index.html)
+- [Game boosters roundup (iTechGuides)](https://www.itechguides.com/10-best-game-boosters-and-optimizers-for-windows-pc-in-2026/), [Tier1Settings tools comparison](https://tier1settings.com/best-pc-optimization-tools-for-gaming/)
+- [Windows 11 gaming settings (Memento Mori Gaming)](https://mementomorigaming.com/guides/pc/windows-11-gaming-optimization), [WindowsForum tuning guide](https://windowsforum.com/news/windows-11-gaming-tuning-guide-2026-safe-consistent-performance.401517/)

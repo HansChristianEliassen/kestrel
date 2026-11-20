@@ -53,6 +53,7 @@ pub fn run() -> Vec<Check> {
         memory_speed(),
         memory_in_use(),
         storage(),
+        drive_health(),
         network(),
         overlays(),
         gpu_scheduling(),
@@ -275,6 +276,17 @@ fn storage() -> Check {
     check("Storage", detail, attention, None)
 }
 
+fn drive_health() -> Check {
+    let list = super::drive_health::drives();
+    let attention = list.iter().any(|d| d.2);
+    let detail = if list.is_empty() {
+        "Couldn't read the drives' health.".to_string()
+    } else {
+        list.iter().map(|(name, text, _)| format!("{name}: {text}")).collect::<Vec<_>>().join(". ") + "."
+    };
+    check("Drive health", detail, attention, Some(("Disks & volumes", "ms-settings:disksandvolumes")))
+}
+
 fn network() -> Check {
     let mut wired = Vec::new();
     let mut wifi = Vec::new();
@@ -377,6 +389,53 @@ fn restart_pending() -> Check {
         "No restart is waiting for Windows Update."
     };
     check("Pending restart", detail.into(), pending, pending.then_some(("Windows Update", "ms-settings:windowsupdate")))
+}
+
+/// "About this PC": one line per part, for Settings and for pasting into support forums. Read-only, fast.
+pub fn system_summary() -> Vec<(&'static str, String)> {
+    let cv = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion").ok();
+    let reg = |name: &str| cv.as_ref().and_then(|k| k.get_value::<String, _>(name).ok()).unwrap_or_default();
+    let ubr = cv.as_ref().and_then(|k| k.get_value::<u32, _>("UBR").ok()).unwrap_or(0);
+    // EditionID uses internal names; the common ones get the names people know.
+    let edition = match reg("EditionID").as_str() {
+        "Core" | "CoreSingleLanguage" => "Home".to_string(),
+        "Professional" => "Pro".to_string(),
+        other => other.to_string(),
+    };
+    let windows = format!("Windows 11 {edition} {} (build {}.{ubr})", reg("DisplayVersion"), reg("CurrentBuild"));
+    let cpu = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        .and_then(|k| k.get_value::<String, _>("ProcessorNameString"))
+        .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
+        .unwrap_or_default();
+    let threads = std::thread::available_parallelism().map_or(0, |n| n.get());
+    let memory = {
+        use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+        let mut m = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
+        let total = if unsafe { GlobalMemoryStatusEx(&mut m) }.is_ok() { fmt_bytes(m.ullTotalPhys) } else { "Unknown".into() };
+        match smbios_table().as_deref().and_then(parse_memory) {
+            Some((cur, rated)) if cur < rated => format!("{total} at {cur} MT/s (modules rated {rated} MT/s)"),
+            Some((cur, _)) => format!("{total} at {cur} MT/s"),
+            None => total,
+        }
+    };
+    let join = |v: Vec<String>| if v.is_empty() { "Unknown".to_string() } else { v.join("; ") };
+    let graphics = join(gpus().into_iter().map(|(name, version, _)| format!("{name}, driver {version}")).collect());
+    let screens = join(
+        displays()
+            .into_iter()
+            .map(|(device, cur, max)| format!("{} at {cur} Hz (max {max} Hz)", device.trim_start_matches(r"\\.\")))
+            .collect(),
+    );
+    let disks = join(super::drive_health::drives().into_iter().map(|(name, ..)| name).collect());
+    vec![
+        ("Windows", windows),
+        ("Processor", format!("{cpu}, {threads} threads")),
+        ("Memory", memory),
+        ("Graphics", graphics),
+        ("Displays", screens),
+        ("Drives", disks),
+    ]
 }
 
 fn check(title: &'static str, detail: String, attention: bool, link: Option<(&'static str, &'static str)>) -> Check {
@@ -579,6 +638,14 @@ fn memory_integrity() -> Check {
 #[cfg(test)]
 mod tests {
     use super::{parse_driver_date, parse_memory};
+
+    #[test]
+    #[ignore = "reads this PC's hardware"]
+    fn live_system_summary() {
+        for (part, value) in super::system_summary() {
+            eprintln!("{part}: {value}");
+        }
+    }
 
     #[test]
     fn driver_dates() {

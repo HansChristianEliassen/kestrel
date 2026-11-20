@@ -353,4 +353,8 @@ pub struct UpgradeState {
     pub restart_needed: bool,
     /// Graphics adapters: (name, driver version, age in months). Read when the page opens.
     pub gpus: Vec<(String, String, Option<i32>)>,
+    /// Date Windows Update resumes (YYYY-MM-DD), while paused. Read when the page opens.
+    pub wu_paused: Option<String>,
+    /// Weeks chosen for "Pause for" (1, 2 or 5).
+    pub pause_weeks: u64,
 }

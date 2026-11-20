@@ -12,9 +12,10 @@ use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu, DestroyWindow,
-    GetCursorPos, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu, HICON, ICONINFO, MF_SEPARATOR, MF_STRING,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CONTEXTMENU, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
+    AppendMenuW, ChangeWindowMessageFilterEx, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon,
+    DestroyMenu, DestroyWindow, GetCursorPos, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu, HICON, ICONINFO,
+    MF_SEPARATOR, MF_STRING, MSGFLT_ALLOW, TPM_RETURNCMD, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CONTEXTMENU,
+    WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
 };
 
 use super::wide;
@@ -119,6 +120,11 @@ impl Tray {
                 None,
             )
             .ok()?;
+            // When Kestrel runs as administrator, Windows blocks messages from the (non-elevated) taskbar unless they're
+            // allowed: without this, clicks on the icon and its menu never arrive.
+            for msg in [CALLBACK, *TASKBAR_CREATED.get().unwrap_or(&0)] {
+                let _ = ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, None);
+            }
             let mut data = NOTIFYICONDATAW {
                 cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
                 hWnd: hwnd,

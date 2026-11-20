@@ -51,6 +51,10 @@ pub enum Kind {
     RecycleBin,
     /// Cleared with the supported Delete-DeliveryOptimizationCache cmdlet.
     DeliveryOptimization,
+    /// Windows.old, removed through Disk Cleanup's own "Previous Installations" handler (its permissions block plain deletes).
+    PreviousWindows,
+    /// Superseded Windows components, removed with DISM /StartComponentCleanup. Its size is only known afterwards.
+    ComponentStore,
 }
 
 pub struct Category {
@@ -206,6 +210,26 @@ pub fn categories() -> Vec<Category> {
                     .admin()],
             )
         },
+        Category {
+            kind: Kind::PreviousWindows,
+            warning: Some("After this you can't go back to your previous version of Windows (Settings > System > Recovery)."),
+            ..cat(
+                "Previous Windows installation",
+                "Windows.old, the copy of your old Windows kept after a feature update. Removed with Windows' Disk Cleanup.",
+                false,
+                vec![src(PathBuf::from(format!(r"{}\Windows.old", env_path("SystemDrive").display())), Any).admin()],
+            )
+        },
+        Category {
+            kind: Kind::ComponentStore,
+            warning: Some("Installed updates can no longer be uninstalled afterwards. Takes several minutes."),
+            ..cat(
+                "Old Windows update components",
+                "Older versions of Windows components that updates have replaced. Cleaned with Windows' own DISM tool; the space freed is measured afterwards.",
+                false,
+                vec![src(win.join("WinSxS"), Any).admin()],
+            )
+        },
     ]
 }
 
@@ -247,6 +271,15 @@ pub fn scan(cat: &Category, running: &HashSet<String>, admin: bool) -> Scanned {
         match recycle_bin_info() {
             Some((bytes, count)) => (out.bytes, out.count) = (bytes, count),
             None => out.notes.push("Could not read the Recycle Bin size.".into()),
+        }
+        return out;
+    }
+    // Not walked (WinSxS is mostly hard links to files Windows uses); one entry stands for the DISM cleanup.
+    if cat.kind == Kind::ComponentStore {
+        if admin {
+            out.count = 1;
+        } else {
+            out.notes.push("Needs administrator rights (Settings > Restart as administrator).".into());
         }
         return out;
     }

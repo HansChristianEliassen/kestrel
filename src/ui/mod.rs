@@ -350,10 +350,15 @@ impl App {
                     ui.horizontal(|ui| {
                         let fill = ui.available_width() - 80.0 - 90.0 - 2.0 * S2;
                         cell(ui, fill, false, |ui| ui.add_enabled_ui(has, |ui| checkbox(ui, &mut item.selected, item.cat.name)));
+                        // The component store's size is only known after DISM has cleaned it.
+                        let unknown = item.cat.kind == Kind::ComponentStore;
                         let unit = if item.cat.kind == Kind::RecycleBin { "items" } else { "files" };
-                        cell(ui, 80.0, true, |ui| caption(ui, format!("{} {unit}", item.found.count)));
+                        cell(ui, 80.0, true, |ui| {
+                            caption(ui, if unknown { String::new() } else { format!("{} {unit}", item.found.count) })
+                        });
                         cell(ui, 90.0, true, |ui| {
-                            ui.label(RichText::new(fmt_bytes(item.found.bytes)).color(if has { TEXT } else { TEXT_3 }))
+                            let size = if unknown && has { "Varies".to_string() } else { fmt_bytes(item.found.bytes) };
+                            ui.label(RichText::new(size).color(if has { TEXT } else { TEXT_3 }))
                         });
                     });
                     ui.horizontal(|ui| {
@@ -1097,6 +1102,24 @@ impl App {
             });
         });
 
+        let mut copy = false;
+        section(ui, "About this PC", |ui| copy = link(ui, "Copy").on_hover_text("For support forums or a friend helping out.").clicked());
+        group(ui, |ui| {
+            for (i, (part, value)) in self.about.iter().enumerate() {
+                row(ui, i, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.allocate_ui(vec2(110.0, 18.0), |ui| caption(ui, *part));
+                        ui.add(Label::new(RichText::new(value).color(TEXT)).wrap());
+                    });
+                });
+            }
+        });
+        if copy {
+            let text: Vec<String> = self.about.iter().map(|(part, value)| format!("{part}: {value}")).collect();
+            ui.ctx().copy_text(text.join("\n"));
+            self.show_notice("Copied", "Your PC's details are on the clipboard.");
+        }
+
         section(ui, "About", |_| {});
         let mut notices = false;
         group(ui, |ui| {
@@ -1124,8 +1147,8 @@ impl App {
             setting_row(
                 ui,
                 2,
-                RichText::new("Left to Windows").color(TEXT),
-                "Windows.old and component-store cleanup (Settings > System > Storage > Cleanup recommendations). Kestrel also doesn't mark apps as unused, because Windows has no reliable usage data for them.",
+                RichText::new("Left out on purpose").color(TEXT),
+                "Kestrel doesn't mark apps as unused, because Windows has no reliable usage data for them.",
                 |_| {},
             );
         });

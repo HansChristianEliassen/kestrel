@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.14.0: Health and space
+Based on new research into all-in-one tools (see ROADMAP.md).
+- **Drive health (new status check):** each drive's own health report, without administrator rights. NVMe drives show temperature, how much of their rated life is used, hours powered on, and any critical warning or data errors (the same data as Settings > Storage > Disks & volumes); SATA drives show their built-in failure prediction. A drive in trouble is flagged with a reminder to back up.
+- **Deep cleanup (Cleanup, administrator):** two new categories, both off by default and both using Windows' own tools:
+  - **Previous Windows installation:** Windows.old, often 10â€“30 GB after a feature update, removed through Disk Cleanup's own handler. After this you can't go back to the previous Windows version.
+  - **Old Windows update components:** superseded components, cleaned with DISM's component cleanup; the space freed is measured afterwards. Installed updates can no longer be uninstalled.
+- **Pause Windows Update (Updates page, administrator):** pause for 1, 2 or 5 weeks before a match or a busy week, and resume when you like. It's the same pause as Settings > Windows Update, so it shows there and can be resumed there too. Kestrel never disables updates.
+- **About this PC (Settings):** Windows version and build, processor, memory and its speed, graphics and driver, displays and refresh rates, and drives, with Copy for support forums.
+- **Fixed: the tray icon ignored clicks when Kestrel ran as administrator.** Windows blocks messages from the taskbar to an elevated app unless the app allows them, so Open and Exit did nothing and Kestrel could only be ended in Task Manager.
+
 ## 0.13.0: App and driver updates
 - **Updates (new page):** keep your apps and drivers current from one place. Nothing is checked until you click, and nothing installs without a confirmation.
   - **Apps:** lists installed apps with a newer version in the winget catalog (Windows' own package manager), with the installed and available version. Update one, tick several, or Update all; they update silently one after another, with progress and "Cancel the rest", and one summary at the end. winget checks each installer's hash; installers that need administrator rights get Windows' normal prompt. A link opens the Microsoft Store's updates for Store apps.

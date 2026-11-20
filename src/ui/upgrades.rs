@@ -71,7 +71,62 @@ impl App {
         );
         self.app_updates(ui);
         self.driver_updates(ui);
+        self.windows_update(ui);
         self.graphics_driver(ui);
+    }
+
+    /// Pause / resume, exactly as Settings > Windows Update does it.
+    fn windows_update(&mut self, ui: &mut Ui) {
+        use crate::upgrade::pause;
+        section(ui, "Windows Update", |_| {});
+        let admin = self.admin;
+        let up = &mut self.upgrades;
+        if up.pause_weeks == 0 {
+            up.pause_weeks = 1;
+        }
+        let desc = match &up.wu_paused {
+            Some(until) => format!("Paused until {until}. Windows doesn't download or install updates, including security updates, until then."),
+            None => "Stop updates from downloading or restarting the PC before a match or a busy week. Security updates wait too, so resume when you're done. Windows allows up to 5 weeks.".into(),
+        };
+        let mut result = None;
+        group(ui, |ui| {
+            let title = if up.wu_paused.is_some() { "Updates are paused" } else { "Pause updates" };
+            setting_row(ui, 0, RichText::new(title).color(TEXT), &desc, |ui| {
+                let hover = "Needs administrator rights (Restart as administrator).";
+                if up.wu_paused.is_some() {
+                    if row_button(ui, admin, "Resume").on_disabled_hover_text(hover).clicked() {
+                        result = Some(pause::resume());
+                    }
+                } else {
+                    if row_button(ui, admin, "Pause").on_disabled_hover_text(hover).clicked() {
+                        result = Some(pause::pause(up.pause_weeks * 7));
+                    }
+                    eframe::egui::ComboBox::from_id_salt("pause_weeks")
+                        .width(110.0)
+                        .selected_text(plural(up.pause_weeks as usize, "week"))
+                        .show_ui(ui, |ui| {
+                            for w in [1u64, 2, 5] {
+                                ui.selectable_value(&mut up.pause_weeks, w, plural(w as usize, "week"));
+                            }
+                        });
+                }
+            });
+        });
+        ui.add_space(S2);
+        ui.horizontal_wrapped(|ui| {
+            caption(ui, "The same pause as in Settings, so you can also resume it there.");
+            if link(ui, "Open Windows Update").clicked() {
+                open_uri("ms-settings:windowsupdate");
+            }
+        });
+        match result {
+            Some(Ok(msg)) => {
+                up.wu_paused = pause::paused_until();
+                self.show_notice("Windows Update", msg);
+            }
+            Some(Err(e)) => self.show_error("Windows Update", e),
+            None => {}
+        }
     }
 
     fn app_updates(&mut self, ui: &mut Ui) {

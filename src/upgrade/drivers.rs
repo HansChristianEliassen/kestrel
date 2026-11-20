@@ -130,8 +130,12 @@ pub fn install(ids: &[String]) -> Result<(Vec<String>, bool), String> {
 
 /// OLE automation date (days since 30 Dec 1899) as YYYY-MM-DD.
 fn ole_date(d: f64) -> String {
-    // Days since 1970-01-01, then the civil-from-days algorithm (H. Hinnant).
-    let z = d.floor() as i64 - 25569 + 719468;
+    date_from_unix_days(d.floor() as i64 - 25569)
+}
+
+/// Days since 1970-01-01 as YYYY-MM-DD (the civil-from-days algorithm, H. Hinnant).
+pub(crate) fn date_from_unix_days(days: i64) -> String {
+    let z = days + 719468;
     let era = z.div_euclid(146097);
     let doe = z - era * 146097;
     let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;

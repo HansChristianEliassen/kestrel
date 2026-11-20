@@ -32,6 +32,8 @@ pub struct App {
     pub(crate) opt: OptState,
     pub(crate) gamemode: GameModeState,
     pub(crate) history: String,
+    /// Settings > About this PC, read when Settings opens.
+    pub(crate) about: Vec<(&'static str, String)>,
     /// Notification-area icon, present only while "Keep watching after closing the window" is on.
     tray: Option<crate::system::tray::Tray>,
     /// Exit was chosen from the tray menu, so the next close request really closes.
@@ -69,6 +71,7 @@ impl App {
             opt: OptState::default(),
             gamemode: GameModeState::default(),
             history: String::new(),
+            about: Vec::new(),
             tray: None,
             exiting: false,
             tucked: false,
@@ -267,7 +270,10 @@ impl App {
         self.page = page;
         match page {
             Page::Apps if !self.apps.loaded => self.load_apps(ctx),
-            Page::Upgrades => self.upgrades.gpus = health::gpu_drivers(),
+            Page::Upgrades => {
+                self.upgrades.gpus = health::gpu_drivers();
+                self.upgrades.wu_paused = upgrade::pause::paused_until();
+            }
             Page::Startup if !self.startup.loaded => self.load_startup(ctx),
             Page::Gaming => self.refresh_gaming(ctx),
             Page::GameMode => {
@@ -276,7 +282,10 @@ impl App {
                 }
                 self.gamemode.apps = self.gamemode.background_apps();
             }
-            Page::Settings => self.history = read_history(),
+            Page::Settings => {
+                self.history = read_history();
+                self.about = health::system_summary();
+            }
             _ => {}
         }
     }
