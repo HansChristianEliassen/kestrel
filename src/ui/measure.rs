@@ -100,7 +100,7 @@ impl App {
             );
         });
 
-        let (mut apply, mut undo) = (None, None);
+        let (mut apply, mut undo, mut open_settings) = (None, None, None);
         if let Some(m) = &g.last {
             let (good, verdict) = advice::verdict(&m.stats);
             section(ui, &format!("Result: {}", m.name), |_| {});
@@ -118,6 +118,20 @@ impl App {
                     row(ui, 1, |ui| {
                         ui.label(RichText::new(text).color(TEXT_2));
                     });
+                }
+                // The game's own settings help most when the graphics card is the limit: offer Kestrel's presets.
+                let exe = g.games.iter().find(|x| x.name == m.name).map(|x| x.exe().to_string());
+                if let (advice::Limit::Gpu(_), Some(exe)) = (advice::limit(&m.stats), exe) {
+                    if crate::optimizer::game_settings::find(&m.name, &exe).is_some() {
+                        row(ui, 2, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Kestrel has graphics presets for this game.").color(TEXT));
+                                if row_button(ui, !busy, "Open game settings").clicked() {
+                                    open_settings = Some((m.name.clone(), exe));
+                                }
+                            });
+                        });
+                    }
                 }
             });
             if !m.applied.is_empty() {
@@ -212,6 +226,9 @@ impl App {
         }
         if measure_now {
             self.start_measure(&ctx, name, &exe);
+        }
+        if let Some((name, exe)) = open_settings {
+            self.open_game_settings(name, exe);
         }
         if let Some(fixes) = undo {
             self.confirm = Some(Confirm {

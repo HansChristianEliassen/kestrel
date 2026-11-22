@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.0: Game settings
+- **Game settings (Gaming > Per-game > Game settings):** three presets for a game's own graphics settings: **Quality** (trims only the most expensive effects), **Balanced** (lowers what costs a lot of FPS for little visible difference) and **Performance** (as many FPS as possible). You see every change first. Presets only lower settings that are above their target; nothing is ever raised. The game must be closed, the original settings file is saved first, and **Undo** puts it back.
+  - **Unreal Engine games** are supported automatically: Kestrel finds the game's GameUserSettings.ini and adjusts its quality groups (shadows, global illumination, reflections, effects, post-processing, foliage, shading, view distance, anti-aliasing) using the levels Epic documents. Textures are left alone; they cost memory, not FPS.
+  - **Red Dead Redemption 2:** volumetrics, soft shadows, trees, particles, ambient occlusion, tessellation, reflections, shadows, parallax occlusion, water physics and motion blur, written only where the file's values name themselves (or, for water physics, are the menu slider's position). Plus a reminder to turn on DLSS, which usually adds the most.
+  - **Overwatch and Call of Duty:** their settings files aren't documented, so Kestrel shows the exact menu steps for each preset instead.
+- **Measure** offers "Open game settings" when the graphics card is the limit and Kestrel has presets for the game.
+
 ## 0.18.0: Find the bottleneck
 - **Measure says what limits the game,** in plain words: the graphics card (busy nearly the whole frame), the processor and what runs next to the game (the graphics card waits part of each frame), or a frame limit (held at, say, 165 FPS by V-Sync or a limiter). It uses PresentMon's GPU-busy time, the measure Intel designed for this.
 - **Advice matched to the bottleneck,** most helpful first. Graphics card: turn on DLSS (RTX cards) or FSR/XeSS, lower the heaviest settings, with a link to the NVIDIA app or AMD Software. Processor: the settings that load the processor (crowds, view distance), memory integrity, background apps. Frame limit: how to raise or remove it. Suggestions are also shown when a game already runs well, under "Want even more FPS?".

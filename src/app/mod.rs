@@ -993,6 +993,7 @@ impl App {
             self.optimize_dialog(ctx);
         }
         self.refresh_trial_dialog(ctx);
+        self.game_settings_dialog(ctx);
         // First launch: ask once whether to check for updates. Nothing goes online before the answer.
         if !self.updates.prefs.asked && self.confirm.is_none() && self.opt.stage == OptStage::Closed {
             self.update_opt_in(ctx);

@@ -220,6 +220,16 @@ pub enum GamingTab {
 /// (game name, exe file name, the measurement with its advice).
 pub type MeasureResult = (String, String, Result<(crate::optimizer::measure::Stats, crate::optimizer::advice::Advice), String>);
 
+/// Gaming > Per-game > Game settings, while open.
+pub struct SettingsDialog {
+    pub name: String,
+    pub exe: String,
+    pub source: Option<crate::optimizer::game_settings::Source>,
+    pub preset: crate::optimizer::game_settings::Preset,
+    /// What the chosen preset would change: (setting, from, to).
+    pub changes: Vec<crate::optimizer::game_settings::Change>,
+}
+
 pub struct Measured {
     pub name: String,
     pub stats: crate::optimizer::measure::Stats,
@@ -255,6 +265,7 @@ pub struct GamingState {
     pub pick: usize,
     pub running: Option<usize>,
     pub running_checked: Option<std::time::Instant>,
+    pub settings: Option<SettingsDialog>,
     /// Measure was clicked before PresentMon was installed: (game name, exe), started once the install finishes.
     pub pending_measure: Option<(String, String)>,
 }
@@ -281,6 +292,7 @@ impl Default for GamingState {
             running: None,
             running_checked: None,
             pending_measure: None,
+            settings: None,
         }
     }
 }

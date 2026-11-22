@@ -1,6 +1,7 @@
 //! Theme, navigation and the screens. Every screen is built from the components in `components`.
 
 pub mod components;
+mod game_settings;
 mod gamemode;
 mod measure;
 mod privacy;
@@ -1046,7 +1047,7 @@ impl App {
         let q = self.gaming.game_search.to_lowercase();
         let searching = self.gaming.games_job.running();
         let mut error = None;
-        let mut play = None;
+        let (mut play, mut settings) = (None, None);
         group(ui, |ui| {
             let mut shown = self.gaming.games.iter_mut().filter(|g| q.is_empty() || g.name.to_lowercase().contains(&q)).peekable();
             if shown.peek().is_none() {
@@ -1064,6 +1065,12 @@ impl App {
                         ui.label(RichText::new(&game.name).color(TEXT));
                         caption(ui, game.source);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if row_button(ui, true, "Game settings")
+                                .on_hover_text("Quality, Balanced or Performance presets for the game's own graphics settings.")
+                                .clicked()
+                            {
+                                settings = Some((game.name.clone(), game.exe().to_string()));
+                            }
                             if row_button(ui, true, "Play")
                                 .on_hover_text("Turns on Game Mode with this game's profile, then starts the game.")
                                 .clicked()
@@ -1122,6 +1129,9 @@ impl App {
         }
         if let Some(exe) = play {
             self.play(ui.ctx(), &exe);
+        }
+        if let Some((name, exe)) = settings {
+            self.open_game_settings(name, exe);
         }
     }
 
