@@ -41,6 +41,8 @@ pub enum Tweak {
     DeliveryUploadOff,
     /// Security trade-off: offered only in the gaming setup, behind its own warning.
     MemoryIntegrityOff,
+    /// NVIDIA driver setting (global), through the NvAPI driver-settings interface.
+    NvShaderCache,
     // Privacy (Privacy page only; never in a preset).
     PrivacyAdId,
     PrivacyTailored,
@@ -59,7 +61,7 @@ pub struct Info {
 }
 
 impl Tweak {
-    pub const ALL: [Tweak; 20] = [
+    pub const ALL: [Tweak; 21] = [
         Tweak::GameMode,
         Tweak::GameDvrOff,
         Tweak::NoBackgroundApps,
@@ -73,6 +75,7 @@ impl Tweak {
         Tweak::GpuScheduling,
         Tweak::DeliveryUploadOff,
         Tweak::MemoryIntegrityOff,
+        Tweak::NvShaderCache,
         Tweak::PrivacyAdId,
         Tweak::PrivacyTailored,
         Tweak::PrivacyLanguageList,
@@ -120,6 +123,7 @@ impl Tweak {
     /// Why changing this setting would do nothing on this PC right now (checked live, so call it off the UI thread).
     pub fn not_needed(self) -> Option<String> {
         match self {
+            Tweak::NvShaderCache => super::nvidia::shader_cache().err().map(|_| "This PC has no NVIDIA graphics card.".into()),
             // Windows only applies power modes on top of the Balanced plan; other plans set performance themselves.
             Tweak::PowerMode => match active_power_scheme() {
                 Ok(plan) if plan != BALANCED => Some(format!(
@@ -137,6 +141,7 @@ impl Tweak {
         match self {
             Tweak::WindowedGames => Some("takes effect the next time each game starts"),
             Tweak::GpuScheduling | Tweak::MemoryIntegrityOff => Some("takes effect after a restart"),
+            Tweak::NvShaderCache => Some("takes effect the next time each game starts"),
             _ => None,
         }
     }
@@ -156,6 +161,7 @@ impl Tweak {
             Tweak::GpuScheduling => "gpu_scheduling",
             Tweak::DeliveryUploadOff => "delivery_upload",
             Tweak::MemoryIntegrityOff => "memory_integrity",
+            Tweak::NvShaderCache => "nvidia_shader_cache",
             Tweak::PrivacyAdId => "privacy_ad_id",
             Tweak::PrivacyTailored => "privacy_tailored",
             Tweak::PrivacyLanguageList => "privacy_language_list",
@@ -245,6 +251,12 @@ impl Tweak {
                 "Memory integrity (Windows Security > Device security > Core isolation) uses virtualization to block malicious drivers from changing Windows. It costs some CPU performance.",
                 "About 4 to 10 percent more FPS in games limited by the processor, according to independent tests.",
                 "Lowers protection against malicious drivers. Some anti-cheat systems and company PCs require it on. Needs a restart.",
+            ),
+            Tweak::NvShaderCache => (
+                "Bigger NVIDIA shader cache (10 GB)",
+                "Games compile shaders (small graphics programs) the first time they need them, and the NVIDIA driver keeps them in a cache on disk. When the cache is full, it throws old ones away and games compile them again, which causes stutter. This raises the cache to 10 GB (NVIDIA Control Panel > Manage 3D settings > Shader Cache Size). A bigger size you already set is kept.",
+                "Fewer hitches when games load new areas or effects, especially in large games.",
+                "Uses up to 10 GB of disk space over time.",
             ),
             Tweak::PrivacyAdId => (
                 "Turn off the advertising ID",
@@ -350,6 +362,7 @@ impl Tweak {
             Tweak::NoMouseAccel => get_mouse()?.map(|v| v.to_string()).join(","),
             Tweak::WindowedGames => read_sz(DX_PREFS, DX_GLOBAL).unwrap_or_else(|| "-".into()),
             Tweak::UsbSuspendOff => usb_suspend()?.to_string(),
+            Tweak::NvShaderCache => super::nvidia::shader_cache()?.to_string(),
             _ => self
                 .registry()
                 .iter()
@@ -417,6 +430,13 @@ impl Tweak {
                 run_hidden("powercfg", &["/setacvalueindex", "SCHEME_CURRENT", SUB_USB, USB_SELECTIVE_SUSPEND, &value.to_string()])?;
                 run_hidden("powercfg", &["/setactive", "SCHEME_CURRENT"]).map(|_| ())
             }
+            Tweak::NvShaderCache => {
+                let mb = match saved {
+                    Some(s) => s.parse::<u32>().map_err(|_| "Saved value is invalid.".to_string())?,
+                    None => super::nvidia::SHADER_CACHE_TARGET_MB,
+                };
+                super::nvidia::set_shader_cache(mb)
+            }
             _ => {
                 write_registry(self.hive(), self.registry(), saved)?;
                 if self == Tweak::NoTransparency {
@@ -437,6 +457,8 @@ impl Tweak {
             Tweak::NoMouseAccel => get_mouse().is_ok_and(|m| m[2] == 0),
             Tweak::WindowedGames => read_sz(DX_PREFS, DX_GLOBAL).is_some_and(|s| get_kv(&s, "SwapEffectUpgradeEnable") == Some("1")),
             Tweak::UsbSuspendOff => usb_suspend().is_ok_and(|v| v == 0),
+            // Only ever raised: a bigger cache (or unlimited) already counts.
+            Tweak::NvShaderCache => super::nvidia::shader_cache().is_ok_and(|mb| mb >= super::nvidia::SHADER_CACHE_TARGET_MB),
             // A Delivery Optimization policy wins over the Settings switch; peering off there counts too.
             Tweak::DeliveryUploadOff => {
                 matches!(read_dword_in(Hive::Machine, DO_POLICY, "DODownloadMode"), Some(0 | 99 | 100))

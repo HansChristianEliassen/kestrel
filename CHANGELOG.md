@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.18.0: Find the bottleneck
+- **Measure says what limits the game,** in plain words: the graphics card (busy nearly the whole frame), the processor and what runs next to the game (the graphics card waits part of each frame), or a frame limit (held at, say, 165 FPS by V-Sync or a limiter). It uses PresentMon's GPU-busy time, the measure Intel designed for this.
+- **Advice matched to the bottleneck,** most helpful first. Graphics card: turn on DLSS (RTX cards) or FSR/XeSS, lower the heaviest settings, with a link to the NVIDIA app or AMD Software. Processor: the settings that load the processor (crowds, view distance), memory integrity, background apps. Frame limit: how to raise or remove it. Suggestions are also shown when a game already runs well, under "Want even more FPS?".
+- **New checks for setup mistakes** (Overview > Status, the gaming setup and Measure):
+  - **Screen plugged into the motherboard** while a graphics card is installed: the most common reason a new PC runs games badly.
+  - **Memory in single channel:** one stick, or all sticks on the same channel (read from the memory's own labels; only reported when certain).
+  - **Laptop on battery or Energy saver.**
+  - **Ryzen X3D with two core groups** (7900X3D, 7950X3D, 9900X3D, 9950X3D): checks that Xbox Game Bar and the AMD chipset driver are installed, which Windows needs to put games on the cache cores.
+- **NVIDIA shader cache (new, reversible):** raises the driver's shader cache to 10 GB, so the driver doesn't throw away compiled shaders and games don't stutter rebuilding them. A bigger size you already set is kept. Uses NVIDIA's driver settings interface (nvapi64.dll, part of every NVIDIA driver); in the gaming setup and Measure's fixes on PCs with NVIDIA graphics.
+
 ## 0.17.0: Set up this PC for gaming
 Optimize PC is now **Set up this PC for gaming** (Overview > Start): one scan finds everything on this PC that slows games down, shows it as one list in plain words, and applies it with one click. Everything can be undone.
 - **Windows settings:** the recommended ones as before, plus two new ones (as administrator): **hardware-accelerated GPU scheduling** (needed for frame generation; after a restart) and **stop sharing updates with other PCs** (frees your upload for online games; a Delivery Optimization policy already set on the PC counts as done).

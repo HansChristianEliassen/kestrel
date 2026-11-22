@@ -1,6 +1,6 @@
 # Kestrel roadmap: what to add and improve next (research, November 2026)
 
-0.14 implemented "Health and space", 0.15 "Control" (privacy, Get apps, skipping app updates) 0.16 "Proof" (Measure a game, Play, Disk usage) and 0.17 "Set up this PC for gaming". Not yet done from 0.15: the running-app warning before an update and update counts on the Overview. The previous roadmap (most of it now shipped) is in git history.
+0.14 implemented "Health and space", 0.15 "Control" (privacy, Get apps, skipping app updates) 0.16 "Proof" (Measure a game, Play, Disk usage) 0.17 "Set up this PC for gaming" and 0.18 "Find the bottleneck" (bottleneck in Measure, setup-mistake checks, NVIDIA shader cache). Deferred: NVIDIA "Prefer maximum performance" per game (small measured effect; needs per-game driver profiles) and AMD driver settings (ADLX). Not yet done from 0.15: the running-app warning before an update and update counts on the Overview. The previous roadmap (most of it now shipped) is in git history.
 
 ## Context
 You asked which features to add or improve to make Kestrel a true all-in-one tool for Windows gaming, optimizing and management. I compared Kestrel 0.13 against the tools people combine today:

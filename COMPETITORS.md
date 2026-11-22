@@ -34,6 +34,17 @@ Not added to conflict detection: EXM Tweaks, VTRL and HDOpti, because their proc
 - **Memory integrity (VBS/HVCI):** measured at about 4–5% in CPU-bound games, up to about 10% in some titles, with a smaller effect on GPU-bound ones. → Offered opt-in only, behind a warning, never automatic. Sources: [Tom's Hardware](https://www.tomshardware.com/news/windows-11-gaming-benchmarks-performance-vbs-hvci-security), [Tom's Hardware (RTX 4090)](https://www.tomshardware.com/news/windows-vbs-harms-performance-rtx-4090), [Digital Trends](https://digitaltrends.com/computing/are-windows-11-security-features-killing-gaming-performance).
 - **Defender exclusions for game folders:** no controlled benchmark found, only anecdotes; PCWorld notes real-time scanning is normally fast. → Rejected (security cost without evidence).
 
+## What competitors do that Kestrel didn't (researched for 0.18)
+| They do | Evidence | Kestrel |
+|---|---|---|
+| NVIDIA driver settings (shader cache size, power management, low latency) | Shader cache size reduces stutter in some games ([PC Gamer](https://pcgamer.com/hardware/i-fixed-borderlands-4s-stuttering-issue-by-upping-my-shader-cache-size-to-100-gb-which-feels-like-something-i-shouldnt-have-to-do-in-a-well-optimised-game), [NVIDIA forum](https://forums.developer.nvidia.com/t/pre-compiled-shader-cache-cleaned-by-nvidia-driver-causing-stutter-when-launching-vulkan-apps/336196.md)); power management mostly steadier clocks | Shader cache 10 GB added (0.18); power management deferred |
+| CPU/GPU bottleneck readout (PresentMon 2, NVIDIA overlay) | Intel's GPU Busy metric ([explainer](https://windowsforum.com/news/intel-presentmon-gpu-busy-explained-how-to-spot-pc-gaming-bottlenecks.452080/)) | Added to Measure (0.18) |
+| Optimal in-game settings (NVIDIA app) | Real, vendor database | Linked when the graphics card is the limit |
+| Process priority / affinity boosters | Windows Game Mode already prioritizes the game; affinity matters for dual-CCD X3D, which AMD handles via Game Bar | X3D requirements check (0.18) |
+| Editing game config files | Breaks with patches | Not done |
+
+Single-channel memory: small average-FPS loss on current discrete-GPU PCs, larger in 1% lows and CPU-heavy games, large with integrated graphics ([PC Gamer](https://www.pcgamer.com/hardware/memory/single-channel-dram-is-bad-news-for-pc-gaming-but-depending-on-what-cpu-you-have-its-not-actually-as-awful-as-you-might-think/), [Tom's Hardware](https://www.tomshardware.com/pc-components/ddr5/single-dimm-ddr5-gaming-works-better-than-you-probably-think-amds-3d-v-cache-chips-drop-less-than-3-percent-one-ddr5-dimm-beats-dual-channel-ddr4-ram), [Phoronix](https://www.phoronix.com/review/single-dual-memory-linux/4)).
+
 ## Sources
 - Hone: [support: recommended optimizations](https://support.hone.gg/hc/en-gb/articles/4758238924959-Recommended-Optimizations-to-Use) · [Hone 1.4 update](https://hone.gg/blog/hone-1-4-update-boost-ups-and-merged-optimizations/) · [independent video review summary](https://gist.ly/youtube-summarizer/analyzing-hone-pc-optimizer-do-the-claims-hold-up) · [Bitsum on timer resolution behaviour](https://bitsum.com/apps/process-lasso/docs/rules/timer-resolution/)
 - Wise Game Booster: [Softpedia](https://www.softpedia.com/get/Tweak/System-Tweak/Wise-Game-Booster.shtml) · [TheWindowsClub](https://www.thewindowsclub.com/optimize-gameplay-wise-game-booster) · [gHacks: do game boosters work?](https://www.google.hu/amp/www.ghacks.net/2015/05/23/do-game-boosters-improve-pc-gaming-performance/)

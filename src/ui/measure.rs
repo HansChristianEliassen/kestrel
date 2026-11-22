@@ -114,6 +114,11 @@ impl App {
                     None,
                     |_| {},
                 );
+                if let Some(text) = advice::limit_text(advice::limit(&m.stats)) {
+                    row(ui, 1, |ui| {
+                        ui.label(RichText::new(text).color(TEXT_2));
+                    });
+                }
             });
             if !m.applied.is_empty() {
                 ui.add_space(S2);
@@ -128,7 +133,19 @@ impl App {
                     },
                 );
             }
-            if !good {
+            // Shown even when the game runs well: the goal is as many FPS as this PC can give.
+            if !good && m.advice.auto.is_empty() && m.advice.manual.is_empty() {
+                ui.add_space(S2);
+                caption(ui, "Kestrel found nothing to change. If a game feels slow in a particular place, measure there.");
+            }
+            {
+                if good {
+                    section(ui, "Want even more FPS?", |_| {});
+                    caption(
+                        ui,
+                        "The game already runs well. These can still raise the frame rate, starting with what helps most for this game.",
+                    );
+                }
                 if !m.advice.auto.is_empty() {
                     let n = m.advice.auto.len();
                     section(ui, "Kestrel can fix", |ui| {
@@ -144,7 +161,11 @@ impl App {
                     ui.add_space(S2);
                     caption(ui, "Every fix can be undone: Kestrel saves the original first (Gaming > Windows settings > Revert, or Settings > Restore everything).");
                 }
-                section(ui, "You can also", |_| {});
+                if !good || !m.advice.auto.is_empty() {
+                    section(ui, "You can also", |_| {});
+                } else {
+                    ui.add_space(S2);
+                }
                 group(ui, |ui| {
                     for (i, (title, detail, link)) in m.advice.manual.iter().enumerate() {
                         setting_row(ui, i, RichText::new(title).color(TEXT), detail, |ui| {
@@ -156,9 +177,6 @@ impl App {
                         });
                     }
                 });
-            } else {
-                ui.add_space(S2);
-                caption(ui, "Nothing needs fixing. If a game feels slow in a particular place, measure there.");
             }
         }
 

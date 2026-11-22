@@ -47,7 +47,11 @@ pub struct Check {
 }
 
 pub fn run() -> Vec<Check> {
-    vec![
+    let cpu = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        .and_then(|k| k.get_value::<String, _>("ProcessorNameString"))
+        .unwrap_or_default();
+    let mut checks = vec![
         refresh_rate(),
         gpu_driver(),
         memory_speed(),
@@ -60,7 +64,9 @@ pub fn run() -> Vec<Check> {
         graphics_features(),
         memory_integrity(),
         restart_pending(),
-    ]
+    ];
+    checks.extend(super::hardware::checks(smbios_table().as_deref(), &cpu));
+    checks
 }
 
 /// "M-D-YYYY" (the display-driver registry format) as (year, month).
@@ -578,7 +584,7 @@ fn parse_memory(table: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// The raw SMBIOS structure table, read through the documented firmware-table API.
-fn smbios_table() -> Option<Vec<u8>> {
+pub(crate) fn smbios_table() -> Option<Vec<u8>> {
     let rsmb = FIRMWARE_TABLE_PROVIDER(u32::from_be_bytes(*b"RSMB"));
     let size = unsafe { GetSystemFirmwareTable(rsmb, 0, None) } as usize;
     if size <= 8 {

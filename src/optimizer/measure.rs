@@ -18,7 +18,15 @@ pub struct Stats {
     pub low_fps: f64,
     /// Share of frames that took more than twice the median frame time, in percent.
     pub stutter_pct: f64,
+    /// How much of the frame time the graphics card was busy, in percent (PresentMon's MsGPUBusy). None when
+    /// the column is missing (older PresentMon) or for results loaded from history.
+    pub gpu_busy_pct: Option<f64>,
+    /// The frame rate is held at this limit (V-Sync or a frame limiter), if it is.
+    pub capped_at: Option<u32>,
 }
+
+/// Common frame-rate limits: refresh rates and round limiter values.
+const CAPS: [u32; 15] = [30, 50, 60, 75, 90, 100, 120, 144, 165, 170, 180, 200, 240, 280, 360];
 
 /// winget's command link for the portable package (per-user install, or machine-wide when installed as admin).
 pub fn presentmon() -> Option<PathBuf> {
@@ -30,22 +38,40 @@ pub fn presentmon() -> Option<PathBuf> {
 /// Frame statistics from PresentMon's CSV, using the MsBetweenPresents column (found by name, not position).
 pub fn stats(csv: &str) -> Option<Stats> {
     let mut lines = csv.lines();
-    let col = lines.next()?.split(',').position(|h| h.trim() == "MsBetweenPresents")?;
-    let mut ms: Vec<f64> = lines.filter_map(|l| l.split(',').nth(col)?.trim().parse().ok()).filter(|v: &f64| *v > 0.0).collect();
-    if ms.len() < 10 {
+    let header: Vec<&str> = lines.next()?.split(',').map(str::trim).collect();
+    let col = header.iter().position(|h| *h == "MsBetweenPresents")?;
+    let gpu_col = header.iter().position(|h| *h == "MsGPUBusy");
+    let rows: Vec<(f64, Option<f64>)> = lines
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(',').collect();
+            let ms: f64 = f.get(col)?.trim().parse().ok()?;
+            (ms > 0.0).then(|| (ms, gpu_col.and_then(|c| f.get(c)?.trim().parse().ok())))
+        })
+        .collect();
+    if rows.len() < 10 {
         return None;
     }
+    let mut ms: Vec<f64> = rows.iter().map(|r| r.0).collect();
     let frames = ms.len();
     let total: f64 = ms.iter().sum();
     ms.sort_by(|a, b| a.total_cmp(b));
     let median = ms[frames / 2];
     let slowest = &ms[frames - (frames / 100).max(1)..];
     let stutters = ms.iter().filter(|v| **v > 2.0 * median).count();
+    // GPU busy as a share of the frame time, over the frames that report it.
+    let (busy, timed) = rows.iter().filter_map(|(ms, busy)| busy.map(|b| (b, *ms))).fold((0.0, 0.0), |(b, t), (x, y)| (b + x, t + y));
+    let gpu_busy_pct = (timed > 0.0).then(|| (100.0 * busy / timed).min(100.0));
+    // Capped: the median sits on a common limit and nearly all frames are close to it.
+    let fps = 1000.0 / median;
+    let tight = ms.iter().filter(|v| (**v - median).abs() <= 0.08 * median).count() as f64 / frames as f64;
+    let capped_at = CAPS.into_iter().find(|c| (fps - *c as f64).abs() <= 0.015 * *c as f64).filter(|_| tight >= 0.85);
     Some(Stats {
         frames,
         avg_fps: 1000.0 * frames as f64 / total,
         low_fps: 1000.0 * slowest.len() as f64 / slowest.iter().sum::<f64>(),
         stutter_pct: 100.0 * stutters as f64 / frames as f64,
+        gpu_busy_pct,
+        capped_at,
     })
 }
 
@@ -94,7 +120,17 @@ pub fn parse_history(text: &str, exe: &str) -> Vec<(u64, Stats)> {
                 return None;
             }
             let n = |i: usize| f[i].parse::<f64>().ok();
-            Some((f[1].parse().ok()?, Stats { avg_fps: n(2)?, low_fps: n(3)?, stutter_pct: n(4)?, frames: f[5].parse().ok()? }))
+            Some((
+                f[1].parse().ok()?,
+                Stats {
+                    avg_fps: n(2)?,
+                    low_fps: n(3)?,
+                    stutter_pct: n(4)?,
+                    frames: f[5].parse().ok()?,
+                    gpu_busy_pct: None,
+                    capped_at: None,
+                },
+            ))
         })
         .collect()
 }
@@ -143,13 +179,37 @@ mod tests {
         assert!(stats("no,such,column\n1,2,3\n").is_none());
     }
 
+    fn csv(rows: &[(f64, f64)]) -> String {
+        let mut s = String::from("Application,MsGPUBusy,MsBetweenPresents\n");
+        for (busy, ms) in rows {
+            s.push_str(&format!("game.exe,{busy},{ms}\n"));
+        }
+        s
+    }
+
+    #[test]
+    fn gpu_busy_and_caps() {
+        // GPU-bound: the card is busy for nearly the whole frame (uneven times, so no cap).
+        let gpu: Vec<(f64, f64)> = (0..200).map(|i| (9.5 + (i % 7) as f64 * 0.4, 10.0 + (i % 7) as f64 * 0.4)).collect();
+        let s = stats(&csv(&gpu)).unwrap();
+        assert!(s.gpu_busy_pct.unwrap() > 90.0 && s.capped_at.is_none());
+        // Processor-bound: the card idles half the frame.
+        let cpu: Vec<(f64, f64)> = (0..200).map(|i| (5.0, 10.0 + (i % 9) as f64 * 0.7)).collect();
+        assert!(stats(&csv(&cpu)).unwrap().gpu_busy_pct.unwrap() < 60.0);
+        // Held at 165 FPS (6.06 ms) by V-Sync or a limiter.
+        let capped: Vec<(f64, f64)> = (0..200).map(|i| (3.0, 6.06 + if i % 2 == 0 { 0.05 } else { -0.05 })).collect();
+        assert_eq!(stats(&csv(&capped)).unwrap().capped_at, Some(165));
+        // No MsGPUBusy column (older PresentMon): no share.
+        assert!(stats("Application,MsBetweenPresents\n".to_string().as_str()).is_none());
+    }
+
     #[test]
     fn history_round_trip() {
         let text = "game.exe\t100\t143.0\t97.0\t0.40\t8512\nother.exe\t101\t60.0\t50.0\t1.00\t3600\nbroken line\n";
         let h = parse_history(text, "GAME.EXE");
         assert_eq!(h.len(), 1);
-        assert_eq!(h[0].1, Stats { frames: 8512, avg_fps: 143.0, low_fps: 97.0, stutter_pct: 0.4 });
-        let now = Stats { frames: 9000, avg_fps: 157.3, low_fps: 107.0, stutter_pct: 0.2 };
+        assert_eq!(h[0].1, Stats { frames: 8512, avg_fps: 143.0, low_fps: 97.0, stutter_pct: 0.4, gpu_busy_pct: None, capped_at: None });
+        let now = Stats { frames: 9000, avg_fps: 157.3, low_fps: 107.0, stutter_pct: 0.2, gpu_busy_pct: None, capped_at: None };
         assert_eq!(
             describe(&now, Some(&h[0].1)),
             "157 FPS average, 107 FPS 1% lows, 0.2% stutter (last time 143 / 97 FPS: +10% average, +10% 1% lows)"

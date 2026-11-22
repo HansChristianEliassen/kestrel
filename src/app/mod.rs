@@ -312,7 +312,7 @@ impl App {
         let in_game_mode = self.gamemode.config.auto && self.gamemode.config.games.iter().any(|g| g.file_name() == file);
         self.gaming.measure.start(ctx, move || {
             // The advice is gathered right away, while the game is still open, so it matches what was measured.
-            let result = measure::capture(&file).map(|s| (s, crate::optimizer::advice::advise(&path, build, in_game_mode)));
+            let result = measure::capture(&file).map(|s| (s, crate::optimizer::advice::advise(&path, build, in_game_mode, &s)));
             (name, file, result)
         });
     }
@@ -568,7 +568,8 @@ impl App {
             let recommended: Vec<Tweak> = Tweak::ALL
                 .into_iter()
                 .filter(|t| {
-                    (Preset::Performance.includes(*t) || matches!(t, Tweak::GpuScheduling | Tweak::DeliveryUploadOff))
+                    (Preset::Performance.includes(*t)
+                        || matches!(t, Tweak::GpuScheduling | Tweak::DeliveryUploadOff | Tweak::NvShaderCache))
                         && t.unsupported(build).is_none()
                 })
                 .collect();

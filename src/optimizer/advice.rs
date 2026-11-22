@@ -32,7 +32,47 @@ pub struct Advice {
 }
 
 /// Whether the result is fine, and a plain-language verdict.
+/// What holds the frame rate back, from PresentMon's GPU-busy share and the frame pattern.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Limit {
+    /// The graphics card is busy for nearly the whole frame (percent).
+    Gpu(f64),
+    /// The graphics card waits for the processor (and Windows) for part of each frame (percent busy).
+    Cpu(f64),
+    /// V-Sync or a frame limiter holds the game at this many FPS.
+    Capped(u32),
+    /// PresentMon didn't report GPU busy time.
+    Unknown,
+}
+
+pub fn limit(s: &Stats) -> Limit {
+    match (s.capped_at, s.gpu_busy_pct) {
+        (Some(cap), _) => Limit::Capped(cap),
+        (None, Some(b)) if b >= 85.0 => Limit::Gpu(b),
+        (None, Some(b)) => Limit::Cpu(b),
+        (None, None) => Limit::Unknown,
+    }
+}
+
+/// One plain line saying what limits the game.
+pub fn limit_text(l: Limit) -> Option<String> {
+    match l {
+        Limit::Gpu(b) => Some(format!(
+            "Limited by the graphics card (busy {b:.0}% of each frame). The game's own settings help most; Windows changes won't add much here."
+        )),
+        Limit::Cpu(b) => Some(format!(
+            "Limited by the processor or what runs next to the game: the graphics card is only busy {b:.0}% of each frame and waits for the rest."
+        )),
+        Limit::Capped(cap) => Some(format!("Held at {cap} FPS by V-Sync or a frame limit, so it can't go faster than that.")),
+        Limit::Unknown => None,
+    }
+}
+
 pub fn verdict(s: &Stats) -> (bool, String) {
+    // A game held steadily at a limit runs as smoothly as it can at that limit.
+    if let (Some(cap), false) = (s.capped_at, s.stutter_pct > 2.0) {
+        return (true, format!("Runs steadily at {cap} FPS, held there by V-Sync or a frame limit."));
+    }
     let low = s.avg_fps < 60.0;
     let uneven = s.low_fps < 0.5 * s.avg_fps || s.stutter_pct > 2.0;
     let (avg, lows) = (s.avg_fps.round(), s.low_fps.round());
@@ -49,9 +89,10 @@ pub fn verdict(s: &Stats) -> (bool, String) {
 
 /// Looks for causes on this PC (reads settings and runs the health checks; takes a few seconds).
 /// `in_game_mode`: the game is already in the Game Mode list with automatic Game Mode on.
-pub fn advise(exe: &str, build: u32, in_game_mode: bool) -> Advice {
+pub fn advise(exe: &str, build: u32, in_game_mode: bool, stats: &Stats) -> Advice {
+    let bottleneck = limit(stats);
     let mut auto = Vec::new();
-    for t in [Tweak::GameMode, Tweak::GameDvrOff, Tweak::WindowedGames, Tweak::PowerMode, Tweak::GpuScheduling] {
+    for t in [Tweak::GameMode, Tweak::GameDvrOff, Tweak::WindowedGames, Tweak::PowerMode, Tweak::GpuScheduling, Tweak::NvShaderCache] {
         if t.unsupported(build).is_none() && !t.is_applied() && t.not_needed().is_none() {
             let info = t.info();
             auto.push((info.title.to_string(), info.benefit.to_string(), Fix::Tweak(t)));
@@ -107,11 +148,55 @@ pub fn advise(exe: &str, build: u32, in_game_mode: bool) -> Advice {
             manual.push((c.title.to_string(), c.detail, c.link));
         }
     }
-    manual.push((
-        "Lower the game's graphics settings".into(),
-        "In the game's video or graphics options, choose a lower preset, or turn down resolution scale, shadows and effects. This helps more than any Windows setting when the graphics card is the limit.".into(),
-        None,
-    ));
+    // What helps most depends on what limits the game; those items come first.
+    let gpu_name = health::gpu_drivers().into_iter().map(|g| g.0).find(|n| !n.contains("Basic")).unwrap_or_default().to_lowercase();
+    let first: Vec<(String, String, Link)> = match bottleneck {
+        Limit::Gpu(_) => {
+            let rtx = gpu_name.contains("rtx");
+            let (upscaler, app): (&str, Link) = if gpu_name.contains("nvidia") {
+                (if rtx { "DLSS" } else { "FSR or XeSS" }, Some(("NVIDIA app", "https://www.nvidia.com/en-us/software/nvidia-app/")))
+            } else if gpu_name.contains("amd") || gpu_name.contains("radeon") {
+                ("FSR", Some(("AMD Software", "https://www.amd.com/en/products/software/adrenalin.html")))
+            } else {
+                ("XeSS or FSR", None)
+            };
+            vec![
+                (
+                    format!("Turn on {upscaler} in the game"),
+                    format!("Upscaling renders fewer pixels and sharpens the picture back up. In the game's graphics settings, set {upscaler} to Quality or Balanced: often 30 to 70 percent more FPS with little visible difference."),
+                    None,
+                ),
+                (
+                    "Lower the heaviest graphics settings".into(),
+                    "Shadows, ray tracing, volumetric fog and clouds, and resolution scale cost the most. Lowering them one step each helps far more than any Windows setting when the graphics card is the limit.".into(),
+                    app,
+                ),
+            ]
+        }
+        Limit::Cpu(_) => vec![(
+            "Lower the settings that load the processor".into(),
+            "Crowd and traffic density, view or draw distance, physics and simulation quality load the processor. Graphics settings like shadows matter less here. Closing apps running next to the game helps too.".into(),
+            None,
+        )],
+        Limit::Capped(cap) => vec![(
+            format!("Raise or remove the {cap} FPS limit"),
+            format!("The game is held at {cap} FPS by V-Sync or a frame limiter in its settings. If your screen can show more, turn V-Sync off or raise the limit. With G-SYNC or FreeSync, a limit a few FPS below the screen's refresh rate is smoothest."),
+            None,
+        )],
+        Limit::Unknown => vec![(
+            "Lower the game's graphics settings".into(),
+            "In the game's video or graphics options, choose a lower preset, or turn down resolution scale, shadows and effects. This often helps more than any Windows setting.".into(),
+            None,
+        )],
+    };
+    // Memory integrity matters when the processor is the limit; otherwise it goes after the game's settings.
+    if !matches!(bottleneck, Limit::Cpu(_)) {
+        if let Some(i) = manual.iter().position(|m| m.0 == "Memory integrity is on") {
+            let item = manual.remove(i);
+            manual.push(item);
+        }
+    }
+    manual.splice(0..0, first);
     Advice { auto, manual }
 }
 
@@ -125,7 +210,20 @@ mod tests {
     use super::*;
 
     fn s(avg: f64, low: f64, stutter: f64) -> Stats {
-        Stats { frames: 1000, avg_fps: avg, low_fps: low, stutter_pct: stutter }
+        Stats { frames: 1000, avg_fps: avg, low_fps: low, stutter_pct: stutter, gpu_busy_pct: None, capped_at: None }
+    }
+
+    #[test]
+    fn limits() {
+        let mut st = s(100.0, 70.0, 0.2);
+        assert_eq!(limit(&st), Limit::Unknown);
+        st.gpu_busy_pct = Some(97.0);
+        assert_eq!(limit(&st), Limit::Gpu(97.0));
+        st.gpu_busy_pct = Some(55.0);
+        assert!(matches!(limit(&st), Limit::Cpu(_)) && limit_text(limit(&st)).unwrap().contains("55%"));
+        st.capped_at = Some(165);
+        assert_eq!(limit(&st), Limit::Capped(165));
+        assert!(verdict(&st).0 && verdict(&st).1.contains("165 FPS"));
     }
 
     #[test]
