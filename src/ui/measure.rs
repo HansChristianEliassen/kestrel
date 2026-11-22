@@ -185,11 +185,15 @@ impl App {
         }
         ui.add_space(S2);
         caption(ui, "Uses Intel PresentMon (free, open source).");
+        let clean = link(ui, "Rule out other software with a clean test").clicked();
 
         if restart {
             if let Err(e) = relaunch_as_admin(&format!("game:{chosen}")) {
                 self.show_error("Restart as administrator", e);
             }
+        }
+        if clean {
+            self.open_clean_test(&ctx);
         }
         if measure_now {
             self.start_measure(&ctx, name, &exe);

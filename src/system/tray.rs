@@ -47,6 +47,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             WM_RBUTTONUP | WM_CONTEXTMENU => menu(hwnd),
             _ => 0,
         };
+        if request == CMD_OPEN {
+            restore_main();
+        }
         if request != 0 {
             REQUEST.store(request as u8, Ordering::Relaxed);
             if let Some(ctx) = WAKE.get() {
@@ -62,6 +65,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
     }
     DefWindowProcW(hwnd, msg, wp, lp)
+}
+
+/// Brings the main window back and gives it focus. Done here, while handling the click: Windows only lets
+/// an app take the foreground in response to the user's input, and a frame later that right is gone (the
+/// window then came back unfocused, and the next clicks only activated it).
+unsafe fn restore_main() {
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_RESTORE};
+    if let Some(hwnd) = main_window() {
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+        let _ = SetForegroundWindow(hwnd);
+    }
+    // The button comes back with the window, not a frame later.
+    taskbar_button(true);
 }
 
 /// Shows Open / Exit at the cursor and returns the chosen command (0 when dismissed).
@@ -185,16 +201,15 @@ fn main_window() -> Option<HWND> {
 
 /// Adds or removes the main window's taskbar button. Kestrel "closes to the tray" by minimizing without a
 /// taskbar button: a hidden (SW_HIDE) eframe window keeps repainting and uses CPU, a minimized one doesn't.
-pub fn taskbar_button(show: bool) {
+/// Returns false when the window isn't visible yet (or Windows refused), so the caller can try again.
+pub fn taskbar_button(show: bool) -> bool {
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
     use windows::Win32::UI::Shell::{ITaskbarList, TaskbarList};
-    let Some(hwnd) = main_window() else { return };
+    let Some(hwnd) = main_window() else { return false };
     super::com_init();
     unsafe {
-        let Ok(list) = CoCreateInstance::<_, ITaskbarList>(&TaskbarList, None, CLSCTX_INPROC_SERVER) else { return };
-        if list.HrInit().is_ok() {
-            let _ = if show { list.AddTab(hwnd) } else { list.DeleteTab(hwnd) };
-        }
+        let Ok(list) = CoCreateInstance::<_, ITaskbarList>(&TaskbarList, None, CLSCTX_INPROC_SERVER) else { return false };
+        list.HrInit().is_ok() && if show { list.AddTab(hwnd) } else { list.DeleteTab(hwnd) }.is_ok()
     }
 }
 

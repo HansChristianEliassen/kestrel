@@ -9,6 +9,7 @@ Done so far:
 - 0.19 "Game settings": presets for Unreal Engine games and RDR2 (verified values only), guides for Overwatch and Call of Duty.
 - 0.20 "Simpler layout": five sections (Home, Games, Windows, Clean up, Apps) plus Settings; one page per game; Services.
 - 0.21 "Know more": guides for Valorant, Apex Legends and Minecraft, hard drive warning, update counts on Home, Copy diagnostics, opt-in Start with Windows, memory in use on Startup apps.
+- 0.22 "Clean test": a temporary, reviewed clean boot to rule out other software, measured with Measure.
 
 Next:
 - More games, each through documented sources or one calibration (Counter-Strike 2 and Cyberpunk 2077 need one calibration run each); RDR2 DLSS and Overwatch file values once verified.

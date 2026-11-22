@@ -31,7 +31,7 @@ impl Start {
     }
 
     /// How it's written to the backup file.
-    fn code(self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             Start::Auto => "2",
             Start::Delayed => "2d",
@@ -40,7 +40,7 @@ impl Start {
         }
     }
 
-    fn from_code(s: &str) -> Option<Start> {
+    pub(crate) fn from_code(s: &str) -> Option<Start> {
         Start::ALL.into_iter().find(|t| t.code() == s)
     }
 
@@ -253,6 +253,52 @@ fn is_insider() -> bool {
         k.get_value::<String, _>("BranchName").is_ok_and(|b| !b.is_empty())
             || k.get_value::<u32, _>("EnableExperimentation").is_ok_and(|v| v != 0)
     })
+}
+
+/// Services that start with Windows (automatic or delayed), drivers and per-user copies left out:
+/// (key name, display name, program path, start type). For the clean test.
+pub(crate) fn autostart() -> Vec<(String, String, String, Start)> {
+    let Ok(root) = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(ROOT) else { return Vec::new() };
+    root.enum_keys()
+        .flatten()
+        .filter_map(|name| {
+            let k = root.open_subkey(&name).ok()?;
+            let kind: u32 = k.get_value("Type").ok()?;
+            if kind & 0x30 == 0 || kind & 0x80 != 0 {
+                return None;
+            }
+            let start = Start::from_reg(k.get_value("Start").ok()?, k.get_value("DelayedAutostart").unwrap_or(0))?;
+            if !matches!(start, Start::Auto | Start::Delayed) {
+                return None;
+            }
+            let display = k.get_value::<String, _>("DisplayName").ok().filter(|d| !d.is_empty() && !d.starts_with('@'));
+            let image = program_path(&k.get_value::<String, _>("ImagePath").ok()?)?;
+            Some((name.clone(), display.unwrap_or(name), image, start))
+        })
+        .collect()
+}
+
+/// The program file in a service's ImagePath: `"C:\x\svc.exe" -k` or `C:\x\svc.exe /s`, environment expanded.
+fn program_path(image: &str) -> Option<String> {
+    let s = crate::system::expand_env(image.trim());
+    let s = s.trim_start_matches(r"\??\");
+    let path = match s.strip_prefix('"') {
+        Some(rest) => rest.split('"').next()?.to_string(),
+        None => s[..s.to_lowercase().find(".exe")? + 4].to_string(),
+    };
+    Some(path)
+}
+
+/// Sets a start type without saving an original in the shared backup (the clean test keeps its own record),
+/// then stops a disabled service or starts one that starts with Windows, so the change takes effect now.
+pub(crate) fn set_start(name: &str, to: Start) -> Result<(), String> {
+    write(name, to)?;
+    match to {
+        Start::Disabled => control(name, false),
+        Start::Auto | Start::Delayed => control(name, true),
+        Start::Manual => {}
+    }
+    Ok(())
 }
 
 fn key(name: &str) -> String {

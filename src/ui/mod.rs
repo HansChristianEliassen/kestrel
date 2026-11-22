@@ -1,5 +1,6 @@
 //! Theme, navigation and the screens. Every screen is built from the components in `components`.
 
+mod cleantest;
 pub mod components;
 mod game_settings;
 mod gamemode;
@@ -204,7 +205,7 @@ impl App {
         };
         // Settings Kestrel changed and can put back (each has a saved original).
         let changed = self.gaming.status.iter().filter(|s| s.1).count();
-        let (mut windows, mut updates) = (false, false);
+        let (mut windows, mut updates, mut clean) = (false, false, false);
         // Counts from the last check on Apps > Updates; Kestrel never checks in the background.
         let count = |n: usize, what: &str| format!("{n} {what}{}", if n == 1 { "" } else { "s" });
         let (apps, drivers) = (self.upgrades.apps.as_ref().map(Vec::len), self.upgrades.drivers.as_ref().map(Vec::len));
@@ -232,7 +233,20 @@ impl App {
             setting_row(ui, 3, RichText::new("Updates").color(TEXT), &latest, |ui| {
                 updates = button(ui, true, "View").clicked();
             });
+            let (desc, label) = match self.clean.active {
+                Some(_) => ("On: measure your game, then end the test", "End test"),
+                None => ("Rule out other software: off for one restart, then put back", "Start…"),
+            };
+            setting_row(ui, 4, RichText::new("Clean test").color(TEXT), desc, |ui| {
+                clean = button(ui, !self.clean.run.running(), label).clicked();
+            });
         });
+        if clean {
+            match self.clean.active {
+                Some(_) => self.clean.run.start(&ctx, crate::cleantest::end),
+                None => self.open_clean_test(&ctx),
+            }
+        }
         if windows {
             self.go(Page::Windows, &ctx);
         }
@@ -1220,9 +1234,9 @@ impl App {
         let mut start_changed = false;
         group(ui, |ui| {
             let note = if cfg.auto {
-                "Closing the window keeps Kestrel in the notification area, so automatic Game Mode keeps working. Click the icon to reopen it; its menu has Exit."
+                "Closing the window keeps Kestrel in the notification area, so automatic Game Mode keeps working. Click the icon to reopen it (Windows may hide it under ^ in the taskbar corner); its menu has Exit."
             } else {
-                "Closing the window keeps Kestrel in the notification area instead of exiting. Click the icon to reopen it; its menu has Exit."
+                "Closing the window keeps Kestrel in the notification area instead of exiting. Click the icon to reopen it (Windows may hide it under ^ in the taskbar corner); its menu has Exit."
             };
             setting_row(ui, 0, RichText::new("Minimize to tray when closed").color(TEXT), note, |ui| {
                 save |= toggle(ui, &mut cfg.tray).changed();
@@ -1264,7 +1278,7 @@ impl App {
                 ui,
                 0,
                 RichText::new("Restore everything").color(TEXT),
-                "Puts back every original Kestrel saved: Windows settings, startup apps, services, per-game settings and display refresh rates.",
+                "Puts back every original Kestrel saved: Windows settings, startup apps, services, per-game settings and display refresh rates, and ends a clean test.",
                 |ui| restore = button(ui, !busy, "Restore…").clicked(),
             );
             setting_row(
@@ -1676,7 +1690,7 @@ Trade-off: {}",
 fn restore_all_confirm() -> Confirm {
     Confirm {
         title: "Restore original settings?".into(),
-        body: "Everything Kestrel changed goes back to the value saved before the change: Windows settings, startup apps, services, per-game settings and display refresh rates.".into(),
+        body: "Everything Kestrel changed goes back to the value saved before the change: Windows settings, startup apps, services, per-game settings and display refresh rates. A running clean test ends too.".into(),
         warning: None,
         ok: "Restore",
         action: Action::RestoreAll,

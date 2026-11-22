@@ -493,3 +493,19 @@ pub struct UpgradeState {
     /// Updates hidden by "Skip this version" in the last check.
     pub skipped: usize,
 }
+
+/// Clean test: the review dialog and the running test.
+#[derive(Default)]
+pub struct CleanTestState {
+    pub open: bool,
+    pub plan: Job<crate::cleantest::Plan>,
+    pub loaded: Option<crate::cleantest::Plan>,
+    /// Item ids the user unticked in the review.
+    pub unticked: std::collections::HashSet<String>,
+    /// Starting or ending a test: one line per item.
+    pub run: Job<Vec<String>>,
+    /// Lines from a test just started, shown with Restart now.
+    pub started: Option<Vec<String>>,
+    /// (services, startup apps) off while a test is on.
+    pub active: Option<(usize, usize)>,
+}

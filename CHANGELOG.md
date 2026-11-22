@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.22.0: Clean test
+- **Clean test (Home > This PC, or "Rule out other software" on a game's Measure tab):** a guided, temporary version of Microsoft's clean boot, to find out whether other software is what slows your games. Kestrel lists the other programs' services that start with Windows and your startup apps, you untick anything you want kept, and **Start test** turns them off and offers a restart. Kestrel opens by itself after the restart with a banner on every page; measure your game (Measure compares it with your earlier run), then **End test** puts everything back. Settings > Restore everything also ends a test.
+- **What stays on:** Windows' own services and drivers are never touched (told apart by the program's company, as msconfig does), and neither are anti-cheat, game launchers' services, security software, or hardware software for graphics, audio, network, Bluetooth, controllers and input devices. Programs Kestrel can't identify are left alone too.
+- **Honest result when there's nothing to turn off:** if nothing else starts with Windows, the dialog says so: other software isn't what slows your games, and a driver may be (LatencyMon shows which).
+- The test keeps its own record of what it changed, so ending it never undoes choices you made on the Services or Startup apps tabs.
+- **Tray fixes:** clicking Kestrel's tray icon now brings the window to the front with focus, so the tray flyout closes and your next click works (before, the first click only activated the window). Starting with Windows with the tray on now really starts in the tray, without a taskbar button. The Settings text says where to find the icon: Windows 11 may hide it under ^ in the taskbar corner.
+
 ## 0.21.0: Know more
 - **More games with menu-step guides** (Game settings tab of a game's page; no files are edited): **Valorant** (Riot's own list: Improve Clarity, Experimental Sharpening, Bloom, Distortion and Cast Shadows off, the four quality settings lowered gradually), **Apex Legends** (EA's own values: V-Sync off unless you see tearing, Ambient Occlusion and Volumetric Lighting off, Texture Streaming Budget Low or Medium, Model Detail Low, Bilinear filtering) and **Minecraft** (Graphics Fast or Fancy, Render and Simulation Distance). Steps use only what the game's publisher documents; Counter-Strike 2 is left out because Valve publishes no performance guidance and the third-party guides disagree.
 - **Hard drive warning** on a game's Measure tab when the game is installed on a hard drive instead of an SSD.

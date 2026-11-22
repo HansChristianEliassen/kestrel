@@ -29,6 +29,7 @@ pub struct App {
     pub(crate) upgrades: UpgradeState,
     pub(crate) startup: StartupState,
     pub(crate) services: ServicesState,
+    pub(crate) clean: CleanTestState,
     pub(crate) gaming: GamingState,
     pub(crate) opt: OptState,
     pub(crate) gamemode: GameModeState,
@@ -44,6 +45,8 @@ pub struct App {
     tucked_seen: bool,
     /// Started by the "Start with Windows" entry: tuck into the tray as soon as it exists.
     start_tucked: bool,
+    /// The taskbar button still has to go: the window wasn't visible yet when it was tucked away.
+    hide_button: bool,
     pub(crate) updates: UpdateState,
     /// When the last automatic update check started (this run).
     update_tried: Option<std::time::Instant>,
@@ -73,6 +76,7 @@ impl App {
             upgrades: UpgradeState::default(),
             startup: StartupState::default(),
             services: ServicesState::default(),
+            clean: CleanTestState { active: crate::cleantest::active_counts(), ..Default::default() },
             gaming: GamingState { selected: preset_selection(Preset::Balanced, build), ..Default::default() },
             opt: OptState::default(),
             gamemode: GameModeState::default(),
@@ -83,6 +87,7 @@ impl App {
             tucked: false,
             tucked_seen: false,
             start_tucked: std::env::args().any(|a| a == crate::system::START_ARG),
+            hide_button: false,
             updates: UpdateState::default(),
             update_tried: None,
             relaunch: None,
@@ -348,8 +353,16 @@ impl App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             if self.tray.is_some() {
-                taskbar_button(false);
                 self.tucked = true;
+                self.hide_button = true;
+            }
+        }
+        // The window only becomes visible after this frame, so keep trying until its button can be removed.
+        if self.hide_button {
+            if taskbar_button(false) {
+                self.hide_button = false;
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
         }
         match self.tray.as_ref().and_then(|t| t.take()) {
@@ -366,7 +379,7 @@ impl App {
         if self.tray.is_some() && !self.exiting && ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-            taskbar_button(false);
+            self.hide_button = !taskbar_button(false);
             self.tucked = true;
         }
         // Restored by the icon, a second launch or Alt+Tab: give the taskbar button back.
@@ -374,6 +387,7 @@ impl App {
         match ctx.input(|i| i.viewport().minimized) {
             Some(true) if self.tucked => self.tucked_seen = true,
             Some(false) if self.tucked && self.tucked_seen => {
+                self.hide_button = false;
                 taskbar_button(true);
                 (self.tucked, self.tucked_seen) = (false, false);
             }
@@ -655,6 +669,7 @@ impl App {
             if everything {
                 lines.extend(startup::restore_all());
                 lines.extend(crate::services::restore_all());
+                lines.extend(crate::cleantest::end());
                 lines.extend(gaming::restore_all_games());
                 lines.extend(health::restore_displays());
             }
@@ -950,6 +965,18 @@ impl App {
             self.startup.memory = crate::gamemode::watch::process_memory(&names);
             self.startup.entries = entries;
         }
+        if let Some(p) = self.clean.plan.poll() {
+            self.clean.loaded = Some(p);
+        }
+        if let Some(lines) = self.clean.run.poll() {
+            let ended = self.clean.active.is_some();
+            self.clean.active = crate::cleantest::active_counts();
+            if ended {
+                self.show_notice("Clean test ended", format!("Everything is back on. Restart to finish.\n{}", lines.join("\n")));
+            } else {
+                self.clean.started = Some(lines);
+            }
+        }
         if let Some(list) = self.services.load.poll() {
             if self.services.list.is_empty() {
                 let recommended = list.iter().filter(|c| c.group == crate::services::Group::Recommended && !c.applied());
@@ -991,6 +1018,7 @@ impl App {
         }
         if let Some(lines) = self.gaming.apply.poll() {
             self.show_notice("Settings", lines.join("\n"));
+            self.clean.active = crate::cleantest::active_counts();
             self.refresh_gaming(ctx);
             self.gaming.games.iter_mut().for_each(|g| g.refresh());
         }
@@ -1040,6 +1068,7 @@ impl App {
             self.optimize_dialog(ctx);
         }
         self.refresh_trial_dialog(ctx);
+        self.clean_test_dialog(ctx);
         // First launch: ask once whether to check for updates. Nothing goes online before the answer.
         if !self.updates.prefs.asked && self.confirm.is_none() && self.opt.stage == OptStage::Closed {
             self.update_opt_in(ctx);
@@ -1098,6 +1127,12 @@ impl eframe::App for App {
                     self.go(Page::Apps, ctx);
                 }
                 "settings" => self.go(Page::Settings, ctx),
+                "cleantest" => {
+                    self.go(Page::Dashboard, ctx);
+                    if self.clean.active.is_none() {
+                        self.open_clean_test(ctx);
+                    }
+                }
                 "services" => {
                     self.gaming.windows_tab = WindowsTab::Services;
                     self.go(Page::Windows, ctx);
@@ -1140,6 +1175,7 @@ impl eframe::App for App {
                     // 12 px gutter so the scrollbar never sits on the lists' edge.
                     ui.set_max_width((ui.available_width() - 12.0).min(920.0));
                     self.update_banner(ui);
+                    self.clean_test_banner(ui);
                     match self.page {
                         Page::Dashboard => self.dashboard(ui),
                         Page::Games => self.games_page(ui),

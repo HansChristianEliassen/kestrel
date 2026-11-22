@@ -2,6 +2,7 @@
 
 mod app;
 mod cleaner;
+mod cleantest;
 mod gamemode;
 mod logo;
 mod optimizer;
