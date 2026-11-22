@@ -42,6 +42,8 @@ pub struct App {
     /// The window was closed to the tray: minimized, without a taskbar button.
     tucked: bool,
     tucked_seen: bool,
+    /// Started by the "Start with Windows" entry: tuck into the tray as soon as it exists.
+    start_tucked: bool,
     pub(crate) updates: UpdateState,
     /// When the last automatic update check started (this run).
     update_tried: Option<std::time::Instant>,
@@ -80,6 +82,7 @@ impl App {
             exiting: false,
             tucked: false,
             tucked_seen: false,
+            start_tucked: std::env::args().any(|a| a == crate::system::START_ARG),
             updates: UpdateState::default(),
             update_tried: None,
             relaunch: None,
@@ -340,6 +343,15 @@ impl App {
         } else if !want {
             self.tray = None;
         }
+        // Started with Windows: the window was created hidden; show it minimized, and tucked away if the tray is there.
+        if std::mem::take(&mut self.start_tucked) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            if self.tray.is_some() {
+                taskbar_button(false);
+                self.tucked = true;
+            }
+        }
         match self.tray.as_ref().and_then(|t| t.take()) {
             Some(Request::Open) => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
@@ -453,6 +465,7 @@ impl App {
             Page::Settings => {
                 self.history = read_history();
                 self.about = health::system_summary();
+                self.startup.self_start = startup::autostart::is_enabled();
             }
             _ => {}
         }
@@ -933,6 +946,8 @@ impl App {
             }
         }
         if let Some(entries) = self.startup.load.poll() {
+            let names: std::collections::HashSet<String> = entries.iter().filter_map(|e| startup::exe_name(&e.command)).collect();
+            self.startup.memory = crate::gamemode::watch::process_memory(&names);
             self.startup.entries = entries;
         }
         if let Some(list) = self.services.load.poll() {

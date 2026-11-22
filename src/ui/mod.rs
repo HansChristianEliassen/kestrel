@@ -16,7 +16,7 @@ use crate::app::state::{Action, AppsTab, CleanupTab, Confirm, GamingState, OptSt
 use crate::app::{preset_selection, App};
 use crate::cleaner::Kind;
 use crate::optimizer::games::Game;
-use crate::optimizer::{Preset, Tweak};
+use crate::optimizer::{health, Preset, Tweak};
 use crate::system::{open_uri, pick_exe, relaunch_as_admin, show_in_folder};
 use crate::uninstaller::{AppSource, InstalledApp};
 use crate::utils::{data_dir, logging::read_history};
@@ -204,7 +204,18 @@ impl App {
         };
         // Settings Kestrel changed and can put back (each has a saved original).
         let changed = self.gaming.status.iter().filter(|s| s.1).count();
-        let mut windows = false;
+        let (mut windows, mut updates) = (false, false);
+        // Counts from the last check on Apps > Updates; Kestrel never checks in the background.
+        let count = |n: usize, what: &str| format!("{n} {what}{}", if n == 1 { "" } else { "s" });
+        let (apps, drivers) = (self.upgrades.apps.as_ref().map(Vec::len), self.upgrades.drivers.as_ref().map(Vec::len));
+        let latest = match (apps, drivers) {
+            (None, None) => "Not checked yet".to_string(),
+            (Some(0) | None, Some(0) | None) => "Everything checked is up to date".to_string(),
+            (a, d) => format!(
+                "{} available",
+                [a.map(|n| count(n, "app")), d.map(|n| count(n, "driver"))].into_iter().flatten().collect::<Vec<_>>().join(" and ")
+            ),
+        };
         group(ui, |ui| {
             setting_row(ui, 0, RichText::new("Clean up").color(TEXT), &cleanup, |ui| {
                 scan = button(ui, !self.cleaner.scan.running(), if self.cleaner.items.is_empty() { "Scan" } else { "Review" }).clicked();
@@ -218,9 +229,16 @@ impl App {
             setting_row(ui, 2, RichText::new("Windows settings").color(TEXT), &what, |ui| {
                 windows = button(ui, true, "View").clicked();
             });
+            setting_row(ui, 3, RichText::new("Updates").color(TEXT), &latest, |ui| {
+                updates = button(ui, true, "View").clicked();
+            });
         });
         if windows {
             self.go(Page::Windows, &ctx);
+        }
+        if updates {
+            self.apps.tab = AppsTab::Updates;
+            self.go(Page::Apps, &ctx);
         }
         if optimize {
             self.start_optimize(&ctx);
@@ -900,10 +918,21 @@ impl App {
         if refresh {
             self.load_startup(ui.ctx());
         }
+        ui.horizontal(|ui| {
+            secondary(ui, "Sort by");
+            segmented(ui, &mut self.startup.by_memory, &[(false, "Name"), (true, "Memory now")]);
+        });
         ui.add_space(S2);
         let mut flip = None;
         let admin = self.admin;
         let busy = self.startup.toggle.running();
+        // Memory is what a startup app costs while you play; Windows keeps no per-app startup timings Kestrel can read.
+        let memory_of =
+            |e: &crate::startup::StartupEntry| crate::startup::exe_name(&e.command).and_then(|n| self.startup.memory.get(&n).copied());
+        let mut order: Vec<usize> = (0..self.startup.entries.len()).collect();
+        if self.startup.by_memory {
+            order.sort_by_key(|&i| std::cmp::Reverse(memory_of(&self.startup.entries[i]).unwrap_or(0)));
+        }
         group(ui, |ui| {
             if self.startup.entries.is_empty() {
                 if self.startup.load.running() {
@@ -912,9 +941,13 @@ impl App {
                     empty_state(ui, "No startup apps", "Nothing is set to start when you sign in.");
                 }
             }
-            for (i, e) in self.startup.entries.iter().enumerate() {
+            for (n, &i) in order.iter().enumerate() {
+                let e = &self.startup.entries[i];
                 let publisher = if e.publisher.is_empty() { "Unknown publisher" } else { &e.publisher };
-                let desc = format!("{publisher} · {}", e.location);
+                let mut desc = format!("{publisher} · {}", e.location);
+                if let Some(bytes) = memory_of(e).filter(|b| *b > 0) {
+                    desc.push_str(&format!(" · {} in use now", fmt_bytes(bytes)));
+                }
                 let reason = if e.protected && e.enabled {
                     Some("Security software stays on.")
                 } else if e.machine && !admin {
@@ -922,7 +955,7 @@ impl App {
                 } else {
                     None
                 };
-                let title = setting_row(ui, i, RichText::new(&e.name).color(TEXT), &desc, |ui| {
+                let title = setting_row(ui, n, RichText::new(&e.name).color(TEXT), &desc, |ui| {
                     let mut on = e.enabled;
                     let r = ui.add_enabled_ui(reason.is_none() && !busy, |ui| toggle(ui, &mut on)).inner;
                     if r.on_disabled_hover_text(reason.unwrap_or_default()).changed() {
@@ -1184,6 +1217,7 @@ impl App {
         section(ui, "Window", |_| {});
         let cfg = &mut self.gamemode.config;
         let mut save = false;
+        let mut start_changed = false;
         group(ui, |ui| {
             let note = if cfg.auto {
                 "Closing the window keeps Kestrel in the notification area, so automatic Game Mode keeps working. Click the icon to reopen it; its menu has Exit."
@@ -1193,9 +1227,27 @@ impl App {
             setting_row(ui, 0, RichText::new("Minimize to tray when closed").color(TEXT), note, |ui| {
                 save |= toggle(ui, &mut cfg.tray).changed();
             });
+            let note = "Starts Kestrel minimized in the tray when you sign in, so automatic Game Mode works from the start. It uses memory (about 90 MB) and no CPU while it waits, and turns the tray on.";
+            setting_row(ui, 1, RichText::new("Start with Windows").color(TEXT), note, |ui| {
+                start_changed = toggle(ui, &mut self.startup.self_start).changed();
+            });
         });
         ui.add_space(S2);
-        caption(ui, "Off by default. Kestrel never starts with Windows, and uses no CPU while it waits in the tray.");
+        caption(ui, "Both are off by default. Kestrel uses no CPU while it waits in the tray.");
+        if start_changed {
+            let on = self.startup.self_start;
+            match crate::startup::autostart::set(on) {
+                Ok(()) if on && !self.gamemode.config.tray => {
+                    self.gamemode.config.tray = true;
+                    save = true;
+                }
+                Ok(()) => {}
+                Err(e) => {
+                    self.startup.self_start = !on;
+                    self.show_error("Start with Windows", e);
+                }
+            }
+        }
         if save {
             if let Err(e) = self.gamemode.config.save() {
                 self.show_error("Settings", e);
@@ -1212,7 +1264,7 @@ impl App {
                 ui,
                 0,
                 RichText::new("Restore everything").color(TEXT),
-                "Puts back every original Kestrel saved: gaming settings, startup apps, per-game settings and display refresh rates.",
+                "Puts back every original Kestrel saved: Windows settings, startup apps, services, per-game settings and display refresh rates.",
                 |ui| restore = button(ui, !busy, "Restore…").clicked(),
             );
             setting_row(
@@ -1249,8 +1301,13 @@ impl App {
             });
         });
 
-        let mut copy = false;
-        section(ui, "About this PC", |ui| copy = link(ui, "Copy").on_hover_text("For support forums or a friend helping out.").clicked());
+        let (mut copy, mut diag) = (false, false);
+        section(ui, "About this PC", |ui| {
+            copy = link(ui, "Copy").on_hover_text("For support forums or a friend helping out.").clicked();
+            diag = link(ui, "Copy diagnostics")
+                .on_hover_text("For a bug report: also includes Kestrel's version and the latest activity.")
+                .clicked();
+        });
         group(ui, |ui| {
             for (i, (part, value)) in self.about.iter().enumerate() {
                 row(ui, i, |ui| {
@@ -1265,6 +1322,14 @@ impl App {
             let text: Vec<String> = self.about.iter().map(|(part, value)| format!("{part}: {value}")).collect();
             ui.ctx().copy_text(text.join("\n"));
             self.show_notice("Copied", "Your PC's details are on the clipboard.");
+        }
+        if diag {
+            let text = health::diagnostics(env!("CARGO_PKG_VERSION"), self.build, self.admin, &self.about, &self.history);
+            ui.ctx().copy_text(text);
+            self.show_notice(
+                "Copied",
+                "Diagnostics are on the clipboard, including your latest Kestrel activity. Nothing was sent; check it before you paste.",
+            );
         }
 
         section(ui, "About", |_| {});
@@ -1294,6 +1359,17 @@ impl App {
             setting_row(
                 ui,
                 2,
+                RichText::new("Report a problem").color(TEXT),
+                "Opens GitHub. Nothing is sent from Kestrel; paste Copy diagnostics into your report.",
+                |ui| {
+                    if link(ui, "Open GitHub issues").clicked() {
+                        open_uri(&format!("{}/issues/new", crate::update::REPO));
+                    }
+                },
+            );
+            setting_row(
+                ui,
+                3,
                 RichText::new("Left out on purpose").color(TEXT),
                 "Kestrel doesn't mark apps as unused, because Windows has no reliable usage data for them.",
                 |_| {},

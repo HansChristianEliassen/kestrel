@@ -215,6 +215,15 @@ pub(crate) fn drives() -> Vec<(char, Option<bool>, u64, u64)> {
         .collect()
 }
 
+/// Whether this file is on a drive Windows reports as a hard drive. Unknown drive types count as no.
+pub(crate) fn on_hard_drive(path: &str) -> bool {
+    path.chars().next().is_some_and(|c| is_hdd(c, &drives()))
+}
+
+fn is_hdd(letter: char, drives: &[(char, Option<bool>, u64, u64)]) -> bool {
+    drives.iter().any(|(l, ssd, ..)| l.eq_ignore_ascii_case(&letter) && *ssd == Some(false))
+}
+
 /// Whether the drive's disk has no seek penalty (SSD/NVMe). None when Windows can't tell.
 fn is_ssd(letter: char) -> Option<bool> {
     let path = wide(&format!(r"\\.\{letter}:"));
@@ -395,6 +404,21 @@ fn restart_pending() -> Check {
         "No restart is waiting for Windows Update."
     };
     check("Pending restart", detail.into(), pending, pending.then_some(("Windows Update", "ms-settings:windowsupdate")))
+}
+
+/// What to paste into a bug report: Kestrel's version, the Windows build, whether it runs as administrator, the PC's
+/// details and the latest activity lines (newest first). Nothing is sent anywhere; the user pastes it.
+pub fn diagnostics(version: &str, build: u32, admin: bool, about: &[(&str, String)], history: &str) -> String {
+    let mut text = format!("Kestrel {version}\nWindows build: {build}\nAdministrator: {}\n\n", if admin { "yes" } else { "no" });
+    for (part, value) in about {
+        text.push_str(&format!("{part}: {value}\n"));
+    }
+    text.push_str("\nRecent activity (newest first):\n");
+    for line in history.lines().take(30) {
+        text.push_str(line);
+        text.push('\n');
+    }
+    text
 }
 
 /// "About this PC": one line per part, for Settings and for pasting into support forums. Read-only, fast.
@@ -643,6 +667,23 @@ fn memory_integrity() -> Check {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn diagnostics_has_version_build_and_latest_30_lines() {
+        let history: String = (0..40).map(|i| format!("line {i}\n")).collect();
+        let text = super::diagnostics("0.21.0", 26200, true, &[("CPU", "x".into())], &history);
+        assert!(text.starts_with("Kestrel 0.21.0\nWindows build: 26200\nAdministrator: yes"));
+        assert!(text.contains("CPU: x") && text.contains("line 29\n") && !text.contains("line 30"));
+    }
+
+    #[test]
+    fn hard_drive_is_found_by_letter() {
+        let d = [('C', Some(true), 0, 0), ('D', Some(false), 0, 0), ('E', None, 0, 0)];
+        assert!(super::is_hdd('d', &d));
+        assert!(!super::is_hdd('C', &d));
+        assert!(!super::is_hdd('E', &d));
+        assert!(!super::is_hdd('Z', &d));
+    }
+
     use super::{parse_driver_date, parse_memory};
 
     #[test]

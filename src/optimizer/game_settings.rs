@@ -54,12 +54,17 @@ pub type Change = (String, String, String);
 /// What Kestrel can do for this game (exe path and name), if anything.
 pub fn find(name: &str, exe: &str) -> Option<Source> {
     let file = Path::new(exe).file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if name.to_lowercase().contains("minecraft") {
+        return Some(Source::Guide("minecraft"));
+    }
     match file.as_str() {
         "rdr2.exe" => {
             let p = env_path("USERPROFILE").join(r"Documents\Rockstar Games\Red Dead Redemption 2\Settings\system.xml");
             return p.is_file().then_some(Source::Rdr2(p));
         }
         "overwatch.exe" => return Some(Source::Guide("overwatch")),
+        "valorant-win64-shipping.exe" | "valorant.exe" => return Some(Source::Guide("valorant")),
+        "r5apex.exe" | "r5apex_dx12.exe" => return Some(Source::Guide("apex")),
         "cod.exe" | "cod24.exe" | "cod25.exe" | "blackops7.exe" => return Some(Source::Guide("cod")),
         _ => {}
     }
@@ -257,6 +262,48 @@ pub fn guide(game: &str, preset: Preset) -> Vec<String> {
             "Display: NVIDIA Reflex Low Latency On + Boost; V-Sync Off; Custom Frame Rate Limit at your refresh rate",
             "View: World and Weapon Motion Blur Off",
         ]),
+        ("valorant", Preset::Quality) => s(&[
+            "Settings > Video > Graphics Quality: turn off Improve Clarity and Experimental Sharpening (Riot lists both among the first things to turn off for FPS)",
+            "Keep Material Quality, Texture Quality, Detail Quality and UI Quality as they are until you need more FPS",
+        ]),
+        ("valorant", Preset::Balanced) => s(&[
+            "Settings > Video > Graphics Quality: turn off Improve Clarity, Experimental Sharpening, Bloom and Distortion",
+            "Lower Material Quality, Texture Quality, Detail Quality and UI Quality one step at a time (Riot: lower them gradually) and stop when it feels smooth",
+        ]),
+        ("valorant", Preset::Performance) => s(&[
+            "Settings > Video > Graphics Quality: turn off Improve Clarity, Experimental Sharpening, Bloom, Distortion and Cast Shadows",
+            "Lower Material Quality, Texture Quality, Detail Quality and UI Quality one step at a time, as far as you're comfortable with",
+            "VSync: Off (Riot: it may improve performance or reduce input delay, but can cause screen tearing)",
+            "Settings > Video > General: try Fullscreen as the display mode and compare",
+        ]),
+        ("apex", Preset::Quality) => s(&[
+            "Settings > Video: V-Sync: Disabled (unless you see screen tearing)",
+            "Ambient Occlusion: Disabled; Volumetric Lighting: Disabled",
+        ]),
+        ("apex", Preset::Balanced) => s(&[
+            "Settings > Video: V-Sync: Disabled (unless you see screen tearing)",
+            "Ambient Occlusion: Disabled; Volumetric Lighting: Disabled",
+            "Texture Streaming Budget: Medium; Texture Filtering: Bilinear",
+        ]),
+        ("apex", Preset::Performance) => s(&[
+            "Settings > Video: V-Sync: Disabled (unless you see screen tearing)",
+            "Ambient Occlusion: Disabled; Volumetric Lighting: Disabled",
+            "Texture Streaming Budget: Low (EA: Low or Medium; Low if your graphics card has little video memory)",
+            "Model Detail: Low; Texture Filtering: Bilinear",
+        ]),
+        ("minecraft", Preset::Quality) => s(&[
+            "Options > Video Settings: Graphics: Fancy (not Fabulous!)",
+            "Render Distance: raise it gradually and stop when the game starts to stutter (Mojang's own advice)",
+        ]),
+        ("minecraft", Preset::Balanced) => s(&[
+            "Options > Video Settings: Graphics: Fancy",
+            "Render Distance and Simulation Distance: lower them a few chunks at a time until the game runs smoothly",
+        ]),
+        ("minecraft", Preset::Performance) => s(&[
+            "Options > Video Settings: Graphics: Fast",
+            "Render Distance and Simulation Distance: lower them as far as you're comfortable with (render distance costs the most)",
+            "Restart the game after changing video settings",
+        ]),
         _ => Vec::new(),
     }
 }
@@ -394,8 +441,15 @@ mod tests {
 
     #[test]
     fn guides_exist_for_every_preset() {
-        for g in ["overwatch", "cod"] {
-            assert!(Preset::ALL.iter().all(|p| !guide(g, *p).is_empty()));
+        for g in ["overwatch", "cod", "valorant", "apex", "minecraft"] {
+            assert!(Preset::ALL.iter().all(|p| !guide(g, *p).is_empty()), "{g} is missing steps");
         }
+    }
+
+    #[test]
+    fn guides_are_found_by_exe_or_name() {
+        assert_eq!(find("VALORANT", r"C:\Riot\VALORANT-Win64-Shipping.exe"), Some(Source::Guide("valorant")));
+        assert_eq!(find("Apex Legends", r"D:\r5apex.exe"), Some(Source::Guide("apex")));
+        assert_eq!(find("Minecraft Launcher", r"C:\x\javaw.exe"), Some(Source::Guide("minecraft")));
     }
 }

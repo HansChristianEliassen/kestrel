@@ -184,6 +184,8 @@ pub const PAGE_ARG: &str = "--page=";
 
 /// Argument an elevated relaunch passes, so it waits for the old window to close instead of exiting.
 pub const RELAUNCHED: &str = "--relaunched";
+/// Set by the "Start with Windows" entry: begin minimized (in the tray when it is on).
+pub const START_ARG: &str = "--startup";
 
 /// Makes this the only running Kestrel. If another one is open, brings it to the front and returns false,
 /// so two windows can never change the same settings or backup file at once.

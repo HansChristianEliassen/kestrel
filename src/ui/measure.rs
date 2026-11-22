@@ -59,6 +59,15 @@ impl App {
             });
             ui.add_space(S3);
         }
+        if g.on_hdd {
+            info_bar(
+                ui,
+                Status::Caution,
+                &format!("{name} is on a hard drive. Loading and texture streaming are slower and can stutter; an SSD helps most."),
+                |_| {},
+            );
+            ui.add_space(S3);
+        }
         let busy = g.measuring.is_some();
         group(ui, |ui| {
             let running = g.running == Some(chosen);

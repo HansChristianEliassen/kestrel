@@ -32,6 +32,8 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("Kestrel")
             .with_icon(icon())
+            // Started with Windows: created hidden, then shown minimized on the first frame (see `tray_tick`).
+            .with_visible(!std::env::args().any(|a| a == system::START_ARG))
             .with_inner_size([1080.0, 720.0])
             .with_min_inner_size([900.0, 580.0]),
         ..Default::default()

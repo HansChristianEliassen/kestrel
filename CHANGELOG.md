@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.21.0: Know more
+- **More games with menu-step guides** (Game settings tab of a game's page; no files are edited): **Valorant** (Riot's own list: Improve Clarity, Experimental Sharpening, Bloom, Distortion and Cast Shadows off, the four quality settings lowered gradually), **Apex Legends** (EA's own values: V-Sync off unless you see tearing, Ambient Occlusion and Volumetric Lighting off, Texture Streaming Budget Low or Medium, Model Detail Low, Bilinear filtering) and **Minecraft** (Graphics Fast or Fancy, Render and Simulation Distance). Steps use only what the game's publisher documents; Counter-Strike 2 is left out because Valve publishes no performance guidance and the third-party guides disagree.
+- **Hard drive warning** on a game's Measure tab when the game is installed on a hard drive instead of an SSD.
+- **Updates on Home:** how many app and driver updates the last check found, with a View button. Kestrel still checks only when you ask.
+- **Copy diagnostics** (Settings > About this PC) copies Kestrel's version, the Windows build, the PC's details and your latest Kestrel activity, to paste into a bug report; **Report a problem** opens GitHub issues. Nothing is sent from Kestrel.
+- **Start with Windows (opt-in, Settings > Window):** off by default. When you turn it on, Kestrel starts minimized in the notification area when you sign in, so automatic Game Mode works without opening it first. It adds a per-user Run entry (the kind Task Manager > Startup apps lists; no administrator rights) and turns the tray on; turning it off deletes the entry. Honest cost: Kestrel then stays running, using about 90 MB of memory and no CPU while it waits.
+- **Startup apps show what they cost now:** each running startup app shows the memory it uses right now, and you can sort by it. Windows' own per-app startup timings (what Task Manager's "Startup impact" shows) are in administrator-only files with an undocumented format, so Kestrel doesn't guess from them.
+
 ## 0.20.0: Simpler layout
 Kestrel's nine pages are now five sections plus Settings, after comparing how Microsoft PC Manager, the NVIDIA app and Razer Cortex are organized.
 - **Home:** Set up this PC for gaming, **Your games** (most recently measured first, with the last result, Play and Open), **This PC** (Clean up, Game Mode, how many Windows settings Kestrel changed) and status.

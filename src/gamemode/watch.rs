@@ -272,6 +272,26 @@ pub fn app_memory(skip: &[String]) -> Vec<(String, u64)> {
     list
 }
 
+/// Memory used by the running programs with these file names (all their processes added up). Like `app_memory`
+/// it asks only for limited query rights and skips protected programs, so anti-cheat is never opened.
+pub fn process_memory(names: &HashSet<String>) -> std::collections::HashMap<String, u64> {
+    use windows::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    let mut totals = std::collections::HashMap::new();
+    for (pid, name) in process_list() {
+        if !names.contains(&name) || protected(&name).is_some() {
+            continue;
+        }
+        let Ok(h) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }) else { continue };
+        let mut c = PROCESS_MEMORY_COUNTERS { cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32, ..Default::default() };
+        if unsafe { K32GetProcessMemoryInfo(h, &mut c, c.cb) }.as_bool() {
+            *totals.entry(name).or_default() += c.WorkingSetSize as u64;
+        }
+        let _ = unsafe { windows::Win32::Foundation::CloseHandle(h) };
+    }
+    totals
+}
+
 /// Sends a normal close request (WM_CLOSE, the same as clicking X) to each listed app's windows.
 /// Never force-closes: an app with unsaved work can still ask, and apps may choose to stay in the tray.
 pub fn close_apps(names: &[String]) -> Vec<String> {

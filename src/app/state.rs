@@ -202,6 +202,11 @@ pub struct AppsState {
 
 #[derive(Default)]
 pub struct StartupState {
+    /// Memory in use now by the running startup apps, by program file name.
+    pub memory: std::collections::HashMap<String, u64>,
+    pub by_memory: bool,
+    /// Kestrel itself starts with Windows (read when Settings opens).
+    pub self_start: bool,
     pub entries: Vec<StartupEntry>,
     pub load: Job<Vec<StartupEntry>>,
     /// (entry index, result) of a switch in progress; Task Scheduler can take a moment.
@@ -280,6 +285,8 @@ pub struct GamingState {
     pub running: Option<usize>,
     pub running_checked: Option<std::time::Instant>,
     pub settings: Option<SettingsDialog>,
+    /// The open game is installed on a hard drive (read when its page opens).
+    pub on_hdd: bool,
     /// The game whose page is open on Games (index into `games`).
     pub selected_game: Option<usize>,
     pub game_tab: GameTab,
@@ -316,6 +323,7 @@ impl Default for GamingState {
             running_checked: None,
             pending_measure: None,
             settings: None,
+            on_hdd: false,
         }
     }
 }

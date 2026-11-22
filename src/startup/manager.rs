@@ -221,3 +221,31 @@ mod tests {
         assert_eq!(from_hex("zz"), None);
     }
 }
+
+/// The program file name (lower case) a startup command runs: `"C:\x\app.exe" --tray` or `C:\x\app.exe /s`.
+pub fn exe_name(command: &str) -> Option<String> {
+    let c = command.trim();
+    let path = match c.strip_prefix('"') {
+        Some(rest) => rest.split('"').next()?,
+        None => {
+            let end = c.to_lowercase().find(".exe")? + 4;
+            &c[..end]
+        }
+    };
+    let name = std::path::Path::new(path).file_name()?.to_string_lossy().to_lowercase();
+    name.ends_with(".exe").then_some(name)
+}
+
+#[cfg(test)]
+mod exe_name_tests {
+    use super::exe_name;
+
+    #[test]
+    fn finds_the_program_in_common_commands() {
+        assert_eq!(exe_name(r#""C:\Program Files\Discord\Update.exe" --processStart Discord.exe"#).as_deref(), Some("update.exe"));
+        assert_eq!(exe_name(r"C:\Apps\Steam\steam.exe -silent").as_deref(), Some("steam.exe"));
+        assert_eq!(exe_name(r"C:\WINDOWS\system32\rundll32.exe x.dll,Run").as_deref(), Some("rundll32.exe"));
+        assert_eq!(exe_name("cmd /c something"), None);
+        assert_eq!(exe_name(""), None);
+    }
+}

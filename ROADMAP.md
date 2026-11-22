@@ -7,10 +7,11 @@ Done so far:
 - 0.17 "Set up this PC for gaming": one-click setup, startup apps, Game Mode for your games, memory integrity opt-in.
 - 0.18 "Find the bottleneck": bottleneck in Measure, setup-mistake checks, NVIDIA shader cache.
 - 0.19 "Game settings": presets for Unreal Engine games and RDR2 (verified values only), guides for Overwatch and Call of Duty.
-- 0.20 "Simpler layout": five sections (Home, Games, Windows, Clean up, Apps) plus Settings; one page per game.
+- 0.20 "Simpler layout": five sections (Home, Games, Windows, Clean up, Apps) plus Settings; one page per game; Services.
+- 0.21 "Know more": guides for Valorant, Apex Legends and Minecraft, hard drive warning, update counts on Home, Copy diagnostics, opt-in Start with Windows, memory in use on Startup apps.
 
 Next:
-- More games, each through documented sources or one calibration; RDR2 DLSS and Overwatch file values once verified.
+- More games, each through documented sources or one calibration (Counter-Strike 2 and Cyberpunk 2077 need one calibration run each); RDR2 DLSS and Overwatch file values once verified.
 - NVIDIA "Prefer maximum performance" per game (small measured effect; needs per-game driver profiles) and AMD driver settings (ADLX).
 - From 0.15: warn when an app being updated is open; update counts on the Overview.
 
@@ -35,7 +36,7 @@ Those gaps are what make other apps "all-in-one".
 
 The guiding rules stay:
 - every change is opt-in, previewed and reversible;
-- nothing runs in the background;
+- nothing runs in the background unless you turn on Start with Windows;
 - no FPS promises;
 - Windows' own documented mechanisms only.
 

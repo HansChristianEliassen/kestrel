@@ -12,6 +12,7 @@ impl App {
     pub(crate) fn open_game_settings(&mut self, name: String, exe: String) {
         let source = gs::find(&name, &exe);
         let preset = Preset::Balanced;
+        self.gaming.on_hdd = crate::optimizer::health::on_hard_drive(&exe);
         let changes = source.as_ref().map(|s| gs::preview(s, preset).unwrap_or_default()).unwrap_or_default();
         self.gaming.settings = Some(SettingsDialog { name, exe, source, preset, changes });
     }
