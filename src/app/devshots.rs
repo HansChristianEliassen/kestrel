@@ -35,12 +35,8 @@ impl App {
         if self.page != page {
             self.go(page, ctx);
             s.since = Instant::now();
-            // Updates checks only run on a click: leave apps unchecked and list drivers, so both states show (read-only).
-            if page == Page::Upgrades {
-                self.check_driver_updates(ctx);
-            }
         }
-        let settle = if page == Page::Upgrades { SETTLE * 3 } else { SETTLE };
+        let settle = SETTLE;
         let shot = ctx.input(|i| {
             i.events.iter().find_map(|e| match e {
                 egui::Event::Screenshot { image, .. } => Some(image.clone()),

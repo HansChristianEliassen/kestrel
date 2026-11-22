@@ -28,6 +28,7 @@ pub struct App {
     pub(crate) apps: AppsState,
     pub(crate) upgrades: UpgradeState,
     pub(crate) startup: StartupState,
+    pub(crate) services: ServicesState,
     pub(crate) gaming: GamingState,
     pub(crate) opt: OptState,
     pub(crate) gamemode: GameModeState,
@@ -69,6 +70,7 @@ impl App {
             apps: AppsState::default(),
             upgrades: UpgradeState::default(),
             startup: StartupState::default(),
+            services: ServicesState::default(),
             gaming: GamingState { selected: preset_selection(Preset::Balanced, build), ..Default::default() },
             opt: OptState::default(),
             gamemode: GameModeState::default(),
@@ -429,15 +431,20 @@ impl App {
     pub(crate) fn go(&mut self, page: Page, ctx: &egui::Context) {
         self.page = page;
         match page {
-            Page::Apps if !self.apps.loaded => self.load_apps(ctx),
-            Page::Upgrades => {
+            Page::Apps => {
+                if !self.apps.loaded {
+                    self.load_apps(ctx);
+                }
                 self.upgrades.gpus = health::gpu_drivers();
                 self.upgrades.wu_paused = upgrade::pause::paused_until();
             }
-            Page::Startup if !self.startup.loaded => self.load_startup(ctx),
-            Page::Gaming => self.refresh_gaming(ctx),
-            Page::Privacy if !self.gaming.status_job.running() => self.gaming.status_job.start(ctx, tweak_status),
-            Page::GameMode => {
+            Page::Windows => {
+                self.refresh_gaming(ctx);
+                if !self.startup.loaded {
+                    self.load_startup(ctx);
+                }
+            }
+            Page::Games => {
                 if self.gaming.games.is_empty() {
                     self.load_games(ctx);
                 }
@@ -634,6 +641,7 @@ impl App {
                 .collect();
             if everything {
                 lines.extend(startup::restore_all());
+                lines.extend(crate::services::restore_all());
                 lines.extend(gaming::restore_all_games());
                 lines.extend(health::restore_displays());
             }
@@ -688,6 +696,7 @@ impl App {
             Action::UndoFixes(fixes) => self.apply_fixes(ctx, fixes, true),
             Action::UpdateApps(apps) => self.start_app_queue(ctx, apps, false),
             Action::InstallApps(apps) => self.start_app_queue(ctx, apps, true),
+            Action::ApplyServices(rows) => self.services.apply.start(ctx, move || rows.iter().flat_map(crate::services::apply).collect()),
             Action::InstallDrivers(drivers) => {
                 let ids: Vec<String> = drivers.iter().map(|d| d.id.clone()).collect();
                 self.upgrades.drivers_selected.clear();
@@ -917,7 +926,7 @@ impl App {
                     crate::optimizer::measure::save(&file, &stats);
                     let text = crate::optimizer::measure::describe(&stats, before.as_ref());
                     log(&format!("Measure {file}: {text}"));
-                    self.show_notice(&format!("{name}: measured"), format!("{text}. Details and fixes are on Gaming > Measure."));
+                    self.show_notice(&format!("{name}: measured"), format!("{text}. Details and fixes are on its page under Games."));
                     self.gaming.last = Some(Measured { name, stats, before, advice, applied: Vec::new() });
                 }
                 Err(e) => self.show_error(&format!("{name}: not measured"), e),
@@ -925,6 +934,26 @@ impl App {
         }
         if let Some(entries) = self.startup.load.poll() {
             self.startup.entries = entries;
+        }
+        if let Some(list) = self.services.load.poll() {
+            if self.services.list.is_empty() {
+                let recommended = list.iter().filter(|c| c.group == crate::services::Group::Recommended && !c.applied());
+                self.services.selected = recommended.map(|c| c.id()).collect();
+            }
+            self.services.list = list;
+        }
+        if let Some(lines) = self.services.apply.poll() {
+            if !lines.is_empty() {
+                self.show_notice(
+                    "Services",
+                    lines.join(
+                        "
+",
+                    ),
+                );
+            }
+            self.services.selected.clear();
+            self.services.load.start(ctx, crate::services::candidates);
         }
         if let Some((i, result)) = self.startup.toggle.poll() {
             match (result, self.startup.entries.get_mut(i)) {
@@ -941,6 +970,9 @@ impl App {
         }
         if let Some(games) = self.gaming.games_job.poll() {
             self.gaming.games = games;
+            if let Some(i) = self.gaming.pending_game.take().filter(|i| *i < self.gaming.games.len()) {
+                self.open_game(i);
+            }
         }
         if let Some(lines) = self.gaming.apply.poll() {
             self.show_notice("Settings", lines.join("\n"));
@@ -993,7 +1025,6 @@ impl App {
             self.optimize_dialog(ctx);
         }
         self.refresh_trial_dialog(ctx);
-        self.game_settings_dialog(ctx);
         // First launch: ask once whether to check for updates. Nothing goes online before the answer.
         if !self.updates.prefs.asked && self.confirm.is_none() && self.opt.stage == OptStage::Closed {
             self.update_opt_in(ctx);
@@ -1042,12 +1073,20 @@ impl eframe::App for App {
         self.tray_tick(ctx);
         if let Some(page) = self.start_page.take() {
             match page.as_str() {
-                "measure" => {
-                    self.gaming.tab = GamingTab::Measure;
-                    self.go(Page::Gaming, ctx);
+                // "game:2": the page of that game (opened once the game list has loaded).
+                p if p.starts_with("game:") => {
+                    self.gaming.pending_game = p[5..].parse().ok();
+                    self.go(Page::Games, ctx);
                 }
-                "updates" => self.go(Page::Upgrades, ctx),
+                "updates" => {
+                    self.apps.tab = AppsTab::Updates;
+                    self.go(Page::Apps, ctx);
+                }
                 "settings" => self.go(Page::Settings, ctx),
+                "services" => {
+                    self.gaming.windows_tab = WindowsTab::Services;
+                    self.go(Page::Windows, ctx);
+                }
                 _ => {}
             }
         }
@@ -1088,13 +1127,10 @@ impl eframe::App for App {
                     self.update_banner(ui);
                     match self.page {
                         Page::Dashboard => self.dashboard(ui),
+                        Page::Games => self.games_page(ui),
+                        Page::Windows => self.windows_page(ui),
                         Page::Cleaner => self.cleaner_page(ui),
                         Page::Apps => self.apps_page(ui),
-                        Page::Upgrades => self.upgrades_page(ui),
-                        Page::Privacy => self.privacy_page(ui),
-                        Page::Startup => self.startup_page(ui),
-                        Page::Gaming => self.gaming_page(ui),
-                        Page::GameMode => self.game_mode_page(ui),
                         Page::Settings => self.settings_page(ui),
                     }
                     ui.add_space(24.0);

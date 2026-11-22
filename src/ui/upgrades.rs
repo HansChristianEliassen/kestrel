@@ -199,11 +199,6 @@ impl App {
     }
 
     pub(crate) fn upgrades_page(&mut self, ui: &mut Ui) {
-        page_header(
-            ui,
-            "Updates",
-            "Update your apps with winget and your drivers through Windows Update. Nothing is checked or installed until you click.",
-        );
         self.app_updates(ui);
         self.driver_updates(ui);
         self.windows_update(ui);

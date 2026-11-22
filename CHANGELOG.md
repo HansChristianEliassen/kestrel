@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.20.0: Simpler layout
+Kestrel's nine pages are now five sections plus Settings, after comparing how Microsoft PC Manager, the NVIDIA app and Razer Cortex are organized.
+- **Home:** Set up this PC for gaming, **Your games** (most recently measured first, with the last result, Play and Open), **This PC** (Clean up, Game Mode, how many Windows settings Kestrel changed) and status.
+- **Games:** your game library and Game Mode. **Open** a game for its own page: Play on top, then three tabs: **Measure** (result, what limits it, fixes, earlier results), **Game settings** (presets) and **Game Mode** (its profile, or Add, plus Windows' per-game switches). Before, this was spread over Gaming > Per-game, Gaming > Measure and the Game Mode page.
+- **Windows:** Performance (the Windows settings), Startup apps, **Services (new)** and Privacy, as tabs of one page.
+- **Services (new):** a short, researched list of services a gaming PC doesn't need, from Microsoft's own "OK to disable" guidance: telemetry, device-management messages, offline maps, location, Phone Link calls, retail demo, fax, link tracking, mobile hotspot, payments/NFC, Windows Insider (unless you're an Insider) and printing (only when no real printer is installed), plus optional SysMain and other apps' updaters and remote-access tools (set to Manual). Each row says what you lose. Services Windows, games, anti-cheat, Xbox, controllers or sound need are never listed and can't be changed. The original is saved first, the service stops right away, and Revert or Settings > Restore everything starts it again. Honest note: this frees a little memory and background activity; it doesn't add FPS by itself.
+- **Clean up:** unchanged (Junk files, Large files, Disk usage).
+- **Apps:** Installed, Get apps and Updates (apps, drivers, Windows Update) as tabs of one page.
+- Restart as administrator from a game's page comes back to that game; texts that pointed to old page names now point to the new ones; one Play button per game page instead of two.
+- **Less text:** shorter page subtitles and captions throughout; each Windows setting's trade-off moved into its hover text.
+
 ## 0.19.0: Game settings
 - **Game settings (Gaming > Per-game > Game settings):** three presets for a game's own graphics settings: **Quality** (trims only the most expensive effects), **Balanced** (lowers what costs a lot of FPS for little visible difference) and **Performance** (as many FPS as possible). You see every change first. Presets only lower settings that are above their target; nothing is ever raised. The game must be closed, the original settings file is saved first, and **Undo** puts it back.
   - **Unreal Engine games** are supported automatically: Kestrel finds the game's GameUserSettings.ini and adjusts its quality groups (shadows, global illumination, reflections, effects, post-processing, foliage, shading, view distance, anti-aliasing) using the levels Epic documents. Textures are left alone; they cost memory, not FPS.

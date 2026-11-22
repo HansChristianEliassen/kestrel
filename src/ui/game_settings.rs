@@ -1,7 +1,7 @@
-//! Gaming > Per-game > Game settings: pick Quality, Balanced or Performance and Kestrel writes the game's own
-//! settings file (with Undo), or shows the exact menu steps for games whose files aren't documented.
+//! The "Game settings" section of a game's page: pick Quality, Balanced or Performance and Kestrel writes the
+//! game's own settings file (with Undo), or shows the exact menu steps for games whose files aren't documented.
 
-use eframe::egui::{self, RichText};
+use eframe::egui::{RichText, Ui};
 
 use super::components::*;
 use crate::app::state::SettingsDialog;
@@ -16,105 +16,81 @@ impl App {
         self.gaming.settings = Some(SettingsDialog { name, exe, source, preset, changes });
     }
 
-    pub(crate) fn game_settings_dialog(&mut self, ctx: &egui::Context) {
+    pub(crate) fn game_settings_section(&mut self, ui: &mut Ui) {
         let Some(d) = &mut self.gaming.settings else { return };
-        let (mut close, mut apply, mut undo, mut changed) = (false, false, false, false);
-        let (_, x) = dialog(ctx, "game_settings", 520.0, |ui| {
-            dialog_title(ui, &format!("{}: game settings", d.name));
-            let mut p = d.preset;
-            if segmented(ui, &mut p, &Preset::ALL.map(|p| (p, p.label()))) {
-                d.preset = p;
-                changed = true;
-            }
-            secondary(ui, d.preset.desc());
-            ui.add_space(S3);
-            match &d.source {
-                None => {
-                    ui.label("Kestrel doesn't know this game's settings file yet.");
-                    caption(ui, "Measure the game on Gaming > Measure: it tells you which of its settings to lower first.");
+        let (mut apply, mut undo, mut changed) = (false, false, false);
+        group(ui, |ui| {
+            row(ui, 0, |ui| {
+                let mut p = d.preset;
+                if segmented(ui, &mut p, &Preset::ALL.map(|p| (p, p.label()))) {
+                    d.preset = p;
+                    changed = true;
                 }
-                Some(Source::Guide(game)) => {
-                    ui.label(strong("In the game's menu:"));
-                    for (i, step) in gs::guide(game, d.preset).iter().enumerate() {
-                        ui.label(format!("{}. {step}", i + 1));
+                caption(ui, d.preset.desc());
+                ui.add_space(S2);
+                match &d.source {
+                    None => {
+                        ui.label("Kestrel doesn't know this game's settings file yet.");
+                        caption(ui, "Measure the game to see what to lower first.");
                     }
-                    ui.add_space(S1);
-                    caption(ui, "This game's settings file isn't documented, so Kestrel doesn't edit it. These are the same changes, done in the game.");
-                }
-                Some(source) => {
-                    if d.changes.is_empty() {
-                        ui.label("Nothing to change: every setting Kestrel knows is already at or below this preset.");
-                    } else {
-                        ui.label(strong(format!("{} setting{} change:", d.changes.len(), if d.changes.len() == 1 { "" } else { "s" })));
-                        egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    Some(Source::Guide(game)) => {
+                        ui.label(strong("In the game's menu:"));
+                        for (i, step) in gs::guide(game, d.preset).iter().enumerate() {
+                            ui.label(format!("{}. {step}", i + 1));
+                        }
+                    }
+                    Some(source) => {
+                        if d.changes.is_empty() {
+                            ui.label("Nothing to change: already at or below this preset.");
+                        } else {
+                            ui.label(strong(format!("{} setting{} change:", d.changes.len(), if d.changes.len() == 1 { "" } else { "s" })));
                             for (name, from, to) in &d.changes {
                                 ui.label(RichText::new(format!("{name}: {from} \u{2192} {to}")).color(TEXT_2));
                             }
+                        }
+                        if matches!(source, Source::Rdr2(_)) {
+                            caption(ui, "Also turn on DLSS (Quality) in the game for the biggest gain.");
+                        }
+                        ui.add_space(S2);
+                        ui.horizontal(|ui| {
+                            apply = accent_button(ui, !d.changes.is_empty(), "Apply").clicked();
+                            if gs::has_backup(source) {
+                                undo = button(ui, true, "Undo")
+                                    .on_hover_text("Put back the settings from before Kestrel changed them")
+                                    .clicked();
+                            }
+                            caption(ui, "Close the game first.");
                         });
                     }
-                    if matches!(source, Source::Rdr2(_)) {
-                        ui.add_space(S1);
-                        caption(ui, "Also turn on DLSS in the game (Settings > Graphics > NVIDIA DLSS: Quality, or Balanced for more FPS). It usually adds the most FPS of all.");
-                    }
-                    ui.add_space(S1);
-                    caption(ui, "Only settings above this preset are lowered; nothing is raised. Close the game first. The original file is saved, so Undo puts everything back.");
-                    dialog_buttons(ui, |ui| {
-                        if button(ui, true, "Close").clicked() {
-                            close = true;
-                        }
-                        apply = accent_button(ui, !d.changes.is_empty(), "Apply").clicked();
-                        if gs::has_backup(source)
-                            && button(ui, true, "Undo").on_hover_text("Put back the settings from before Kestrel changed them").clicked()
-                        {
-                            undo = true;
-                        }
-                    });
-                    return;
                 }
-            }
-            dialog_buttons(ui, |ui| close = accent_button(ui, true, "Close").clicked());
+            });
         });
+        let refresh = |d: &mut SettingsDialog| {
+            d.changes = d.source.as_ref().map(|s| gs::preview(s, d.preset).unwrap_or_default()).unwrap_or_default()
+        };
         if changed {
-            d.changes = d.source.as_ref().map(|s| gs::preview(s, d.preset).unwrap_or_default()).unwrap_or_default();
+            refresh(d);
         }
         let file = std::path::Path::new(&d.exe).file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
-        if apply {
-            if let Some(source) = d.source.clone() {
-                let (name, preset) = (d.name.clone(), d.preset);
-                match gs::apply(&source, preset, &file) {
-                    Ok(done) => {
-                        self.show_notice(
-                            &format!("{name}: {} settings", preset.label()),
-                            format!(
-                                "Changed {} settings. Start the game to play with them, and measure it to see the difference.",
-                                done.len()
-                            ),
-                        );
-                        self.gaming.settings = None;
-                    }
-                    Err(e) => self.show_error(&format!("{name}: settings not changed"), e),
-                }
-            }
-            return;
+        let (name, preset, source) = (d.name.clone(), d.preset, d.source.clone());
+        let Some(source) = source.filter(|_| apply || undo) else { return };
+        let result = if apply {
+            gs::apply(&source, preset, &file).map(|done| {
+                (
+                    format!("{name}: {} settings", preset.label()),
+                    format!("Changed {} settings. Start the game to play with them, and measure it to see the difference.", done.len()),
+                )
+            })
+        } else {
+            gs::undo(&source, &file)
+                .map(|()| (format!("{name}: settings restored"), "Back to how they were before Kestrel changed them.".to_string()))
+        };
+        match result {
+            Ok((title, body)) => self.show_notice(&title, body),
+            Err(e) => self.show_error(&format!("{name}: settings not changed"), e),
         }
-        if undo {
-            if let Some(source) = d.source.clone() {
-                let name = d.name.clone();
-                match gs::undo(&source, &file) {
-                    Ok(()) => {
-                        self.show_notice(
-                            &format!("{name}: settings restored"),
-                            "The game's settings are back to how they were before Kestrel changed them.",
-                        );
-                        self.gaming.settings = None;
-                    }
-                    Err(e) => self.show_error(&format!("{name}: not restored"), e),
-                }
-            }
-            return;
-        }
-        if close || x {
-            self.gaming.settings = None;
+        if let Some(d) = &mut self.gaming.settings {
+            refresh(d);
         }
     }
 }

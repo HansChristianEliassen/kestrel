@@ -15,39 +15,24 @@ use crate::upgrade::drivers::DriverUpdate;
 #[derive(Clone, Copy, PartialEq)]
 pub enum Page {
     Dashboard,
+    Games,
+    Windows,
     Cleaner,
     Apps,
-    Upgrades,
-    Privacy,
-    Startup,
-    Gaming,
-    GameMode,
     Settings,
 }
 
 impl Page {
-    pub const ALL: [Page; 9] = [
-        Page::Dashboard,
-        Page::Cleaner,
-        Page::Apps,
-        Page::Upgrades,
-        Page::Privacy,
-        Page::Startup,
-        Page::Gaming,
-        Page::GameMode,
-        Page::Settings,
-    ];
+    /// Sidebar order: Home, then Games, then the PC tools; Settings sits at the bottom.
+    pub const ALL: [Page; 6] = [Page::Dashboard, Page::Games, Page::Windows, Page::Cleaner, Page::Apps, Page::Settings];
 
     pub fn label(self) -> &'static str {
         match self {
-            Page::Dashboard => "Overview",
-            Page::Cleaner => "Cleanup",
+            Page::Dashboard => "Home",
+            Page::Games => "Games",
+            Page::Windows => "Windows",
+            Page::Cleaner => "Clean up",
             Page::Apps => "Apps",
-            Page::Upgrades => "Updates",
-            Page::Privacy => "Privacy",
-            Page::Startup => "Startup apps",
-            Page::Gaming => "Gaming",
-            Page::GameMode => "Game Mode",
             Page::Settings => "Settings",
         }
     }
@@ -56,16 +41,34 @@ impl Page {
         use crate::ui::components::icon;
         match self {
             Page::Dashboard => icon::HOME,
+            Page::Games => icon::GAME,
+            Page::Windows => icon::SPEED,
             Page::Cleaner => icon::BROOM,
             Page::Apps => icon::APPS,
-            Page::Upgrades => icon::UPDATE,
-            Page::Privacy => icon::SHIELD,
-            Page::Startup => icon::POWER,
-            Page::Gaming => icon::SPEED,
-            Page::GameMode => icon::GAME,
             Page::Settings => icon::SETTINGS,
         }
     }
+}
+
+/// Tabs of the Windows page.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum WindowsTab {
+    #[default]
+    Performance,
+    Startup,
+    Services,
+    Privacy,
+}
+
+#[derive(Default)]
+pub struct ServicesState {
+    pub list: Vec<crate::services::Candidate>,
+    pub load: Job<Vec<crate::services::Candidate>>,
+    pub loaded: bool,
+    /// Ticked rows, by `Candidate::id`. Filled with the recommended ones on first load.
+    pub selected: std::collections::HashSet<&'static str>,
+    /// Apply or Revert in progress: one result line per service.
+    pub apply: Job<Vec<String>>,
 }
 
 /// One background operation: a short-lived thread whose result is picked up by the UI.
@@ -115,6 +118,8 @@ pub enum Action {
     UndoFixes(Vec<crate::optimizer::advice::Fix>),
     /// Restore point first, then download and install these drivers from Windows Update.
     InstallDrivers(Vec<DriverUpdate>),
+    /// Windows > Services: the rows to apply.
+    ApplyServices(Vec<crate::services::Candidate>),
 }
 
 pub struct Confirm {
@@ -153,6 +158,7 @@ pub enum AppsTab {
     #[default]
     Installed,
     Get,
+    Updates,
 }
 
 #[derive(Clone, Copy, PartialEq, Default)]
@@ -211,10 +217,19 @@ pub type TweakStatus = Vec<(bool, bool, Option<String>)>;
 pub type RefreshChange = (String, u32, u32);
 
 #[derive(Clone, Copy, PartialEq)]
+/// Tabs of the Games page (when no game is open).
 pub enum GamingTab {
-    Settings,
-    Games,
+    Library,
+    GameMode,
+}
+
+/// Tabs on a game's own page.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum GameTab {
+    #[default]
     Measure,
+    Settings,
+    More,
 }
 
 /// (game name, exe file name, the measurement with its advice).
@@ -261,11 +276,16 @@ pub struct GamingState {
     pub measuring: Option<(String, std::time::Instant)>,
     /// The latest measurement this session, shown on the Measure tab.
     pub last: Option<Measured>,
-    /// Game picked on the Measure tab (index into `games`), and the detected running game.
-    pub pick: usize,
+    /// Which of the games in `games` is running (checked every few seconds on a game's page).
     pub running: Option<usize>,
     pub running_checked: Option<std::time::Instant>,
     pub settings: Option<SettingsDialog>,
+    /// The game whose page is open on Games (index into `games`).
+    pub selected_game: Option<usize>,
+    pub game_tab: GameTab,
+    pub windows_tab: WindowsTab,
+    /// Game to open once the game list has loaded (after a restart as administrator from its page).
+    pub pending_game: Option<usize>,
     /// Measure was clicked before PresentMon was installed: (game name, exe), started once the install finishes.
     pub pending_measure: Option<(String, String)>,
 }
@@ -280,7 +300,11 @@ impl Default for GamingState {
             checks: Vec::new(),
             checks_job: Job::default(),
             apply: Job::default(),
-            tab: GamingTab::Settings,
+            tab: GamingTab::Library,
+            selected_game: None,
+            game_tab: GameTab::Measure,
+            windows_tab: WindowsTab::Performance,
+            pending_game: None,
             games: Vec::new(),
             games_job: Job::default(),
             game_search: String::new(),
@@ -288,7 +312,6 @@ impl Default for GamingState {
             measure: Job::default(),
             measuring: None,
             last: None,
-            pick: 0,
             running: None,
             running_checked: None,
             pending_measure: None,

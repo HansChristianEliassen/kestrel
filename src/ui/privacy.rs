@@ -11,11 +11,6 @@ use crate::system::open_uri;
 
 impl App {
     pub(crate) fn privacy_page(&mut self, ui: &mut Ui) {
-        page_header(
-            ui,
-            "Privacy",
-            "Turn off Windows features that share your data or show promotions. Each original value is saved, so Revert puts it back.",
-        );
         let build = self.build;
         let g = &mut self.gaming;
         let all: Vec<Tweak> = Tweak::ALL.into_iter().filter(|t| t.is_privacy()).collect();
@@ -38,10 +33,7 @@ impl App {
         let revert = group(ui, |ui| tweak_rows(ui, g, all.clone(), build));
         ui.add_space(S2);
         ui.horizontal_wrapped(|ui| {
-            caption(
-                ui,
-                "These are the same switches as in Settings, for your account only. Settings that need administrator rights or a company policy (diagnostic data level, Bing results in Start search, Recall) are left to Windows.",
-            );
+            caption(ui, "The same switches as in Settings, for your account only.");
             if link(ui, "Open Privacy & security").clicked() {
                 open_uri("ms-settings:privacy");
             }

@@ -14,12 +14,12 @@ impl App {
         let busy = gm.job.running();
         let desc = match &gm.on {
             Some(on) => match &on.game {
-                Some(game) => format!("On · {} · {game} is running. Turns off when the game closes.", on.profile.label()),
-                None => format!("On · {} · turned on by hand. Stays on until you turn it off or close Kestrel.", on.profile.label()),
+                Some(game) => format!("On · {} · {game} is running", on.profile.label()),
+                None => format!("On · {} · until you turn it off", on.profile.label()),
             },
             None if busy => "Working…".to_string(),
-            None if gm.config.auto => "Off · turns on automatically when one of your games starts.".to_string(),
-            None => format!("Off · temporary {} changes while you play, undone afterwards.", gm.config.manual_profile.label()),
+            None if gm.config.auto => "Off · turns on when one of your games starts".to_string(),
+            None => "Off · quiets your PC while you play".to_string(),
         };
         let mut on = gm.on.is_some();
         let mut changed = false;
@@ -40,11 +40,8 @@ impl App {
     }
 
     pub(crate) fn game_mode_page(&mut self, ui: &mut Ui) {
-        page_header(
-            ui,
-            "Game Mode",
-            "Only while you play: changes are undone when you stop. For settings that stay on all the time, use Gaming.",
-        );
+        secondary(ui, "Quiets your PC while you play; undone when the game closes.");
+        ui.add_space(S2);
         let busy = self.gamemode.job.running();
         let mut save = false;
 
@@ -68,11 +65,7 @@ impl App {
         });
         if self.gamemode.config.auto {
             ui.add_space(S2);
-            caption(
-                ui,
-                "Detection listens for Windows' \"active window changed\" event and never opens or inspects the game, so anti-cheat has nothing to object to. \
-                 While a game runs, Kestrel checks every 5 seconds whether it has closed.",
-            );
+            caption(ui, "Kestrel never opens or inspects the game, so anti-cheat has nothing to object to.");
         }
 
         let profile = self.gamemode.config.manual_profile;
@@ -204,10 +197,7 @@ impl App {
             });
         });
         ui.add_space(S2);
-        caption(
-            ui,
-            "Used by \"Put the apps in your list in efficiency mode\" (reversible; the apps keep running) and \"Close the apps in your list\". Sorted by memory use. Windows components, security software and anti-cheat can't be added.",
-        );
+        caption(ui, "Windows components, security software and anti-cheat can't be added.");
         if let Some(i) = remove_app {
             self.gamemode.config.close.remove(i);
             save = true;
@@ -224,15 +214,17 @@ impl App {
                 ui,
                 0,
                 RichText::new("Restore previous settings").color(TEXT),
-                "If Kestrel or Windows stopped while Game Mode was on, this puts the saved originals back. It also happens automatically at your next sign-in.",
-                |ui| restore = button(ui, gamemode::is_active() && !busy, "Restore").on_disabled_hover_text("Nothing to restore right now.").clicked(),
+                "Puts the saved originals back if Game Mode was cut off. Also runs at your next sign-in.",
+                |ui| {
+                    restore = button(ui, gamemode::is_active() && !busy, "Restore")
+                        .on_disabled_hover_text("Nothing to restore right now.")
+                        .clicked()
+                },
             );
         });
         if restore {
             self.game_mode_off(ui.ctx());
         }
-        ui.add_space(S2);
-        caption(ui, "Not included on purpose: raising game process priority, suspending or force-closing processes, and turning off Windows services.");
 
         if save {
             if let Err(e) = self.gamemode.config.save() {

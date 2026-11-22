@@ -111,12 +111,9 @@ pub mod icon {
     pub const HOME: &str = "\u{E80F}";
     pub const BROOM: &str = "\u{EA99}";
     pub const APPS: &str = "\u{E71D}";
-    pub const POWER: &str = "\u{E7E8}";
     pub const SPEED: &str = "\u{EC4A}";
     pub const GAME: &str = "\u{E7FC}";
     pub const SETTINGS: &str = "\u{E713}";
-    pub const UPDATE: &str = "\u{E895}";
-    pub const SHIELD: &str = "\u{EA18}";
 }
 
 pub fn icon_font(size: f32) -> FontId {

@@ -32,15 +32,14 @@ impl App {
                 if g.games_job.running() {
                     row(ui, 0, |ui| progress(ui, "Looking for your games…"));
                 } else {
-                    empty_state(ui, "No games found", "Add your game on the Per-game tab (\"Add a game…\"), then come back here.");
+                    empty_state(ui, "No games found", "Add your game under Games (\"Add a game…\").");
                 }
             });
             return;
         }
-        g.pick = g.pick.min(g.games.len() - 1);
-        let chosen = g.running.unwrap_or(g.pick);
+        let Some(chosen) = g.selected_game.filter(|i| *i < g.games.len()) else { return };
         let (name, exe) = (g.games[chosen].name.clone(), g.games[chosen].exe().to_string());
-        let (mut measure_now, mut play, mut restart) = (false, false, false);
+        let (mut measure_now, mut restart) = (false, false);
 
         if let Some((what, started)) = &g.measuring {
             let left = u64::from(measure::SECONDS).saturating_sub(started.elapsed().as_secs());
@@ -55,44 +54,32 @@ impl App {
             );
             ui.add_space(S3);
         } else if !self.admin {
-            info_bar(ui, Status::Caution, "Measuring needs administrator rights. Kestrel restarts and comes back to this page.", |ui| {
+            info_bar(ui, Status::Caution, "Measuring needs administrator rights. Kestrel restarts and comes back to this game.", |ui| {
                 restart = row_button(ui, true, "Restart as administrator").clicked();
             });
             ui.add_space(S3);
         }
         let busy = g.measuring.is_some();
         group(ui, |ui| {
-            let running = g.running.is_some();
+            let running = g.running == Some(chosen);
             setting_row_note(
                 ui,
                 0,
                 Some(if running { Status::Ok } else { Status::Neutral }),
                 RichText::new(if running { format!("{name} is running") } else { "Start your game".to_string() }).color(TEXT),
                 if running {
-                    "Get into actual gameplay (not a menu or loading screen) before measuring."
+                    "Get into gameplay, not a menu, before measuring."
                 } else {
-                    "Choose the game and press Play, or start it the way you usually do. Kestrel notices when it's running."
+                    "Press Play, or start it the way you usually do."
                 },
                 None,
-                |ui| {
-                    if !running {
-                        play = row_button(ui, !busy, "Play").clicked();
-                        egui::ComboBox::from_id_salt("measure_game").width(200.0).selected_text(&name).show_ui(ui, |ui| {
-                            for (i, game) in g.games.iter().enumerate() {
-                                ui.selectable_value(&mut g.pick, i, &game.name);
-                            }
-                        });
-                    }
-                },
+                |_| {},
             );
             setting_row(
                 ui,
                 1,
                 RichText::new("Measure while you play").color(TEXT),
-                &format!(
-                    "Play normally for {} seconds. Kestrel counts every frame and tells you how smooth the game runs and what would help.",
-                    measure::SECONDS
-                ),
+                &format!("Play normally for {} seconds.", measure::SECONDS),
                 |ui| {
                     let r = accent_button(ui, !busy && running && self.admin, "Measure");
                     measure_now = r.on_disabled_hover_text("Start the game first (and run Kestrel as administrator).").clicked();
@@ -100,10 +87,11 @@ impl App {
             );
         });
 
-        let (mut apply, mut undo, mut open_settings) = (None, None, None);
-        if let Some(m) = &g.last {
+        let (mut apply, mut undo) = (None, None);
+        // The latest result belongs on this game's page only.
+        if let Some(m) = g.last.as_ref().filter(|m| m.name == name) {
             let (good, verdict) = advice::verdict(&m.stats);
-            section(ui, &format!("Result: {}", m.name), |_| {});
+            ui.add_space(S3);
             group(ui, |ui| {
                 setting_row_note(
                     ui,
@@ -119,46 +107,23 @@ impl App {
                         ui.label(RichText::new(text).color(TEXT_2));
                     });
                 }
-                // The game's own settings help most when the graphics card is the limit: offer Kestrel's presets.
-                let exe = g.games.iter().find(|x| x.name == m.name).map(|x| x.exe().to_string());
-                if let (advice::Limit::Gpu(_), Some(exe)) = (advice::limit(&m.stats), exe) {
-                    if crate::optimizer::game_settings::find(&m.name, &exe).is_some() {
-                        row(ui, 2, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Kestrel has graphics presets for this game.").color(TEXT));
-                                if row_button(ui, !busy, "Open game settings").clicked() {
-                                    open_settings = Some((m.name.clone(), exe));
-                                }
-                            });
-                        });
-                    }
-                }
             });
             if !m.applied.is_empty() {
                 ui.add_space(S2);
-                info_bar(
-                    ui,
-                    Status::Ok,
-                    "Fixes applied. Play the same part of the game and measure again to see the difference. If it got worse, undo them.",
-                    |ui| {
-                        if row_button(ui, !busy, "Undo these fixes").clicked() {
-                            undo = Some(m.applied.clone());
-                        }
-                    },
-                );
+                info_bar(ui, Status::Ok, "Fixes applied. Measure again in the same spot to compare.", |ui| {
+                    if row_button(ui, !busy, "Undo these fixes").clicked() {
+                        undo = Some(m.applied.clone());
+                    }
+                });
             }
             // Shown even when the game runs well: the goal is as many FPS as this PC can give.
             if !good && m.advice.auto.is_empty() && m.advice.manual.is_empty() {
                 ui.add_space(S2);
-                caption(ui, "Kestrel found nothing to change. If a game feels slow in a particular place, measure there.");
+                caption(ui, "Nothing to change. If one spot feels slow, measure there.");
             }
             {
                 if good {
                     section(ui, "Want even more FPS?", |_| {});
-                    caption(
-                        ui,
-                        "The game already runs well. These can still raise the frame rate, starting with what helps most for this game.",
-                    );
                 }
                 if !m.advice.auto.is_empty() {
                     let n = m.advice.auto.len();
@@ -173,7 +138,7 @@ impl App {
                         }
                     });
                     ui.add_space(S2);
-                    caption(ui, "Every fix can be undone: Kestrel saves the original first (Gaming > Windows settings > Revert, or Settings > Restore everything).");
+                    caption(ui, "Every fix can be undone.");
                 }
                 if !good || !m.advice.auto.is_empty() {
                     section(ui, "You can also", |_| {});
@@ -197,7 +162,7 @@ impl App {
         // Earlier results for the chosen game, newest first.
         let history = measure::history(&file_of(&exe));
         if !history.is_empty() {
-            section(ui, &format!("Earlier results: {name}"), |_| {});
+            section(ui, "Earlier results", |_| {});
             group(ui, |ui| {
                 for (i, (when, s)) in history.iter().rev().take(8).enumerate() {
                     row(ui, i, |ui| {
@@ -210,25 +175,15 @@ impl App {
             });
         }
         ui.add_space(S2);
-        caption(
-            ui,
-            "Measuring uses Intel PresentMon, the free, open-source tool reviewers use. Kestrel offers to install it the first time.",
-        );
+        caption(ui, "Uses Intel PresentMon (free, open source).");
 
         if restart {
-            if let Err(e) = relaunch_as_admin("measure") {
+            if let Err(e) = relaunch_as_admin(&format!("game:{chosen}")) {
                 self.show_error("Restart as administrator", e);
             }
         }
-        if play {
-            self.play(&ctx, &exe);
-            self.gaming.running_checked = None;
-        }
         if measure_now {
             self.start_measure(&ctx, name, &exe);
-        }
-        if let Some((name, exe)) = open_settings {
-            self.open_game_settings(name, exe);
         }
         if let Some(fixes) = undo {
             self.confirm = Some(Confirm {

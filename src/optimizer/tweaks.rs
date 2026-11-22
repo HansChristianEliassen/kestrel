@@ -226,7 +226,7 @@ impl Tweak {
                 "Optimizations for windowed games",
                 "Windows 11 setting that lets DirectX 10/11 games in windowed or borderless mode present frames the same efficient way as fullscreen games. Kestrel sets the same per-user value as Settings > Graphics.",
                 "Lower input latency in borderless and windowed games, plus G-SYNC/FreeSync support for them.",
-                "Windows 11 only. Takes effect the next time each game starts. Rarely, an older game shows glitches; you can exclude a single game on the Per-game tab.",
+                "Windows 11 only. Takes effect the next time each game starts. Rarely, an older game shows glitches; you can exclude a single game on its page under Games (Game Mode tab).",
             ),
             Tweak::UsbSuspendOff => (
                 "Turn off USB selective suspend",

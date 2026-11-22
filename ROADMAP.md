@@ -7,6 +7,7 @@ Done so far:
 - 0.17 "Set up this PC for gaming": one-click setup, startup apps, Game Mode for your games, memory integrity opt-in.
 - 0.18 "Find the bottleneck": bottleneck in Measure, setup-mistake checks, NVIDIA shader cache.
 - 0.19 "Game settings": presets for Unreal Engine games and RDR2 (verified values only), guides for Overwatch and Call of Duty.
+- 0.20 "Simpler layout": five sections (Home, Games, Windows, Clean up, Apps) plus Settings; one page per game.
 
 Next:
 - More games, each through documented sources or one calibration; RDR2 DLSS and Overwatch file values once verified.

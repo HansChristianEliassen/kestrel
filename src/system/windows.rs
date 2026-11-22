@@ -47,6 +47,29 @@ pub fn is_admin() -> bool {
     unsafe { IsUserAnAdmin().as_bool() }
 }
 
+/// Whether a Windows service is running right now (false when unknown).
+pub fn service_state(name: &str) -> bool {
+    use windows::Win32::System::Services::{
+        CloseServiceHandle, OpenSCManagerW, OpenServiceW, QueryServiceStatus, SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS, SERVICE_RUNNING,
+        SERVICE_STATUS,
+    };
+    let n = wide(name);
+    unsafe {
+        let Ok(scm) = OpenSCManagerW(None, None, SC_MANAGER_CONNECT) else { return false };
+        let mut status = SERVICE_STATUS::default();
+        let running = match OpenServiceW(scm, PCWSTR(n.as_ptr()), SERVICE_QUERY_STATUS) {
+            Ok(svc) => {
+                let ok = QueryServiceStatus(svc, &mut status).is_ok();
+                let _ = CloseServiceHandle(svc);
+                ok && status.dwCurrentState == SERVICE_RUNNING
+            }
+            Err(_) => false,
+        };
+        let _ = CloseServiceHandle(scm);
+        running
+    }
+}
+
 /// Whether a Windows service is doing anything other than standing stopped. Unknown counts as running.
 pub fn service_running(name: &str) -> bool {
     use windows::Win32::System::Services::{

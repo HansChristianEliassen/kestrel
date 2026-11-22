@@ -132,7 +132,7 @@ pub fn advise(exe: &str, build: u32, in_game_mode: bool, stats: &Stats) -> Advic
     if !Tweak::MemoryIntegrityOff.is_applied() {
         manual.push((
             "Memory integrity is on".to_string(),
-            "This Windows security feature costs about 4 to 10 percent in games limited by the processor. Turning it off is a security trade-off, so Kestrel never does it on its own: it's offered in Overview > Set up this PC for gaming, or you can change it in Windows Security.".to_string(),
+            "This Windows security feature costs about 4 to 10 percent in games limited by the processor. Turning it off is a security trade-off, so Kestrel never does it on its own: it's offered in Home > Set up this PC for gaming, or you can change it in Windows Security.".to_string(),
             Some(("Open Core isolation", "windowsdefender://coreisolation")),
         ));
     }

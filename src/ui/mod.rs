@@ -3,20 +3,19 @@
 pub mod components;
 mod game_settings;
 mod gamemode;
+mod games;
 mod measure;
 mod privacy;
+mod services;
 mod updates;
 mod upgrades;
 
-use std::path::Path;
-
 use eframe::egui::{self, vec2, Align, Align2, Color32, CornerRadius, FontId, Label, Layout, RichText, Sense, Stroke, TextStyle, Ui};
 
-use crate::app::state::{Action, AppsTab, CleanupTab, Confirm, GamingState, GamingTab, OptStage, Page, SortBy};
+use crate::app::state::{Action, AppsTab, CleanupTab, Confirm, GamingState, OptStage, Page, SortBy, WindowsTab};
 use crate::app::{preset_selection, App};
 use crate::cleaner::Kind;
 use crate::optimizer::games::Game;
-use crate::optimizer::gaming::GameSetting;
 use crate::optimizer::{Preset, Tweak};
 use crate::system::{open_uri, pick_exe, relaunch_as_admin, show_in_folder};
 use crate::uninstaller::{AppSource, InstalledApp};
@@ -138,7 +137,8 @@ impl App {
         let mut nav = None;
         // Three quiet groups: the overview, the system tools, and the gaming pages.
         for (i, p) in Page::ALL.into_iter().filter(|p| *p != Page::Settings).enumerate() {
-            if matches!(p, Page::Cleaner | Page::Gaming) && i > 0 {
+            // Groups: Home · Games · the PC tools (Windows, Clean up, Apps).
+            if matches!(p, Page::Games | Page::Windows) && i > 0 {
                 ui.add_space(S3);
             }
             if nav_item(ui, p, self.page == p).clicked() {
@@ -168,7 +168,7 @@ impl App {
     }
 
     pub(crate) fn dashboard(&mut self, ui: &mut Ui) {
-        page_header(ui, "Overview", "Clean up, manage apps and tune Windows for games. Nothing changes until you confirm it.");
+        page_header(ui, "Home", "Get this PC ready for games.");
         let ctx = ui.ctx().clone();
         let (mut optimize, mut scan) = (false, false);
         // The page's one primary action, on its own panel.
@@ -184,11 +184,7 @@ impl App {
                         ui.spacing_mut().item_spacing.y = 4.0;
                         ui.label(RichText::new("Set up this PC for gaming").font(semibold(16.0)).color(TEXT));
                         ui.label(
-                            RichText::new(
-                                "Finds what slows games on this PC and fixes it in one go. You see the list first; all can be undone.",
-                            )
-                            .size(CAPTION + 1.0)
-                            .color(TEXT_2),
+                            RichText::new("Finds what slows games and fixes it. You see the list first.").size(CAPTION + 1.0).color(TEXT_2),
                         );
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -197,19 +193,35 @@ impl App {
                 });
             });
 
-        section(ui, "Quick actions", |_| {});
+        self.home_games(ui);
+
+        section(ui, "This PC", |_| {});
         let found: u64 = self.cleaner.items.iter().map(|i| i.found.bytes).sum();
         let cleanup = if self.cleaner.items.is_empty() {
-            "Temporary files, caches and other leftovers. Nothing is deleted until you confirm.".to_string()
+            "Temporary files and leftovers".to_string()
         } else {
-            format!("{} found in the last scan. Nothing is deleted until you confirm.", fmt_bytes(found))
+            format!("{} to clean up", fmt_bytes(found))
         };
+        // Settings Kestrel changed and can put back (each has a saved original).
+        let changed = self.gaming.status.iter().filter(|s| s.1).count();
+        let mut windows = false;
         group(ui, |ui| {
             setting_row(ui, 0, RichText::new("Clean up").color(TEXT), &cleanup, |ui| {
                 scan = button(ui, !self.cleaner.scan.running(), if self.cleaner.items.is_empty() { "Scan" } else { "Review" }).clicked();
             });
             self.game_mode_row(ui, 1);
+            let what = match changed {
+                0 => "Nothing changed yet".to_string(),
+                1 => "1 setting changed by Kestrel, can be undone".to_string(),
+                n => format!("{n} settings changed by Kestrel, can be undone"),
+            };
+            setting_row(ui, 2, RichText::new("Windows settings").color(TEXT), &what, |ui| {
+                windows = button(ui, true, "View").clicked();
+            });
         });
+        if windows {
+            self.go(Page::Windows, &ctx);
+        }
         if optimize {
             self.start_optimize(&ctx);
         }
@@ -286,12 +298,66 @@ impl App {
         if let Some(fixes) = fix {
             self.try_refresh_fix(fixes);
         }
-        ui.add_space(S2);
-        caption(ui, "Status checks only read your settings. Only Fix changes anything, and only when you click it.");
+    }
+
+    /// Home's "Your games": the most recently measured games first, with their last result, Play and Open.
+    fn home_games(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        let mut all = false;
+        section(ui, "Your games", |ui| {
+            all = link(ui, "All games").clicked();
+        });
+        let log = std::fs::read_to_string(crate::optimizer::measure::history_file()).unwrap_or_default();
+        let mut games: Vec<(usize, Option<(u64, crate::optimizer::measure::Stats)>)> = self
+            .gaming
+            .games
+            .iter()
+            .enumerate()
+            .map(|(i, g)| {
+                let file = std::path::Path::new(g.exe()).file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
+                (i, crate::optimizer::measure::parse_history(&log, &file).pop())
+            })
+            .collect();
+        games.sort_by_key(|(_, last)| std::cmp::Reverse(last.map(|(t, _)| t)));
+        let (mut play, mut open) = (None, None);
+        group(ui, |ui| {
+            if games.is_empty() {
+                if self.gaming.games_job.running() {
+                    row(ui, 0, |ui| progress(ui, "Looking for your games…"));
+                } else {
+                    empty_state(ui, "No games found", "Add one under Games.");
+                }
+            }
+            for (n, (i, last)) in games.iter().take(4).enumerate() {
+                let game = &self.gaming.games[*i];
+                let desc = match last {
+                    Some((_, s)) => format!("{:.0} FPS average, {:.0} FPS 1% lows", s.avg_fps, s.low_fps),
+                    None => format!("{} · not measured yet", game.source),
+                };
+                setting_row(ui, n, RichText::new(&game.name).color(TEXT), &desc, |ui| {
+                    if row_button(ui, true, "Open").clicked() {
+                        open = Some(*i);
+                    }
+                    if row_button(ui, true, "Play").clicked() {
+                        play = Some(game.exe().to_string());
+                    }
+                });
+            }
+        });
+        if let Some(exe) = play {
+            self.play(&ctx, &exe);
+        }
+        if let Some(i) = open {
+            self.go(Page::Games, &ctx);
+            self.open_game(i);
+        } else if all {
+            self.gaming.selected_game = None;
+            self.go(Page::Games, &ctx);
+        }
     }
 
     pub(crate) fn cleaner_page(&mut self, ui: &mut Ui) {
-        page_header(ui, "Cleanup", "Scanning only looks. Files are deleted after you choose categories and confirm.");
+        page_header(ui, "Clean up", "Nothing is deleted until you confirm.");
         pivot(
             ui,
             &mut self.cleaner.tab,
@@ -613,11 +679,12 @@ fn uninstall_confirm(apps: Vec<InstalledApp>) -> Confirm {
 
 impl App {
     pub(crate) fn apps_page(&mut self, ui: &mut Ui) {
-        page_header(ui, "Apps", "Uninstall programs and Store apps with their own uninstaller, or get new ones. You confirm every change.");
-        pivot(ui, &mut self.apps.tab, &[(AppsTab::Installed, "Installed apps"), (AppsTab::Get, "Get apps")]);
-        if self.apps.tab == AppsTab::Get {
-            self.get_apps_tab(ui);
-            return;
+        page_header(ui, "Apps", "You confirm every change.");
+        pivot(ui, &mut self.apps.tab, &[(AppsTab::Installed, "Installed"), (AppsTab::Get, "Get apps"), (AppsTab::Updates, "Updates")]);
+        match self.apps.tab {
+            AppsTab::Get => return self.get_apps_tab(ui),
+            AppsTab::Updates => return self.upgrades_page(ui),
+            AppsTab::Installed => {}
         }
         let busy = self.apps.load.running() || self.apps.uninstall.running();
         let mut refresh = false;
@@ -803,7 +870,7 @@ impl App {
             }
         });
         ui.add_space(S2);
-        caption(ui, format!("{} apps. Kestrel doesn't guess which apps are unused: Windows keeps no reliable record of when desktop apps were last used.", shown.len()));
+        caption(ui, format!("{} apps", shown.len()));
         if let Some((id, on)) = toggled {
             if on {
                 self.apps.selected.insert(id);
@@ -817,7 +884,6 @@ impl App {
     }
 
     pub(crate) fn startup_page(&mut self, ui: &mut Ui) {
-        page_header(ui, "Startup apps", "Choose what starts when you sign in. Turning an app off doesn't uninstall it.");
         let mut refresh = false;
         ui.horizontal(|ui| {
             if !self.admin {
@@ -867,28 +933,32 @@ impl App {
             }
         });
         ui.add_space(S2);
-        caption(ui, "You can also change these in Task Manager > Startup apps (or Task Scheduler for scheduled tasks). Settings > Restore everything puts back what Kestrel changed.");
+        caption(ui, "Also in Task Manager > Startup apps.");
         if let Some(i) = flip {
             let e = self.startup.entries[i].clone();
             self.startup.toggle.start(ui.ctx(), move || (i, crate::startup::set_enabled(&e, !e.enabled)));
         }
     }
 
-    pub(crate) fn gaming_page(&mut self, ui: &mut Ui) {
-        page_header(
-            ui,
-            "Gaming",
-            "Settings here stay on until you revert them; Kestrel saves each original value first. For changes that only last while you play, use Game Mode.",
-        );
+    pub(crate) fn windows_page(&mut self, ui: &mut Ui) {
+        page_header(ui, "Windows", "Every change can be undone.");
+        let mut tab = self.gaming.windows_tab;
         pivot(
             ui,
-            &mut self.gaming.tab,
-            &[(GamingTab::Settings, "Windows settings"), (GamingTab::Games, "Per-game"), (GamingTab::Measure, "Measure")],
+            &mut tab,
+            &[
+                (WindowsTab::Performance, "Performance"),
+                (WindowsTab::Startup, "Startup apps"),
+                (WindowsTab::Services, "Services"),
+                (WindowsTab::Privacy, "Privacy"),
+            ],
         );
-        match self.gaming.tab {
-            GamingTab::Settings => self.gaming_settings_tab(ui),
-            GamingTab::Games => self.games_tab(ui),
-            GamingTab::Measure => self.measure_tab(ui),
+        self.gaming.windows_tab = tab;
+        match tab {
+            WindowsTab::Performance => self.gaming_settings_tab(ui),
+            WindowsTab::Startup => self.startup_page(ui),
+            WindowsTab::Services => self.services_tab(ui),
+            WindowsTab::Privacy => self.privacy_page(ui),
         }
     }
 
@@ -945,9 +1015,7 @@ impl App {
 
         let mut revert = None;
         for (title, recommended) in [("Recommended", true), ("Advanced", false)] {
-            section(ui, title, |ui| {
-                caption(ui, if recommended { "Low risk, useful on most PCs" } else { "Useful in specific cases; check the trade-off" });
-            });
+            section(ui, title, |_| {});
             group(ui, |ui| {
                 let has_backup = |t: &Tweak| g.status.get(t.index()).is_some_and(|s| s.1);
                 // Windows 10-only setting: shown only so an old change can still be reverted.
@@ -969,7 +1037,7 @@ impl App {
         egui::CollapsingHeader::new(RichText::new("What Kestrel doesn't do, and why").color(TEXT_2)).show(ui, |ui| {
             for (what, why) in [
                 ("Strip or \"debloat\" Windows, or install a custom Windows", "Independent tests of debloated builds found no real FPS gain, and undoing them means reinstalling Windows. Apps that aren't running don't slow games."),
-                ("Turn off Windows services or Microsoft Defender", "No measured gain, and it breaks features (Store, Xbox, updates) or leaves the PC unprotected."),
+                ("Disable services Windows, games or anti-cheat need, or Microsoft Defender", "Tests show no FPS gain from disabling services, and it breaks features or leaves the PC unprotected. The Services tab only offers ones a gaming PC doesn't use."),
                 ("Change timer resolution, HPET or boot settings", "Modern Windows already handles timers per app; tests show no gain, and some of these settings make games slower."),
                 ("\"Clean\" memory or close apps by force", "Windows manages memory itself; force-closing apps loses their work. Game Mode's efficiency mode is the safe way to quiet background apps."),
                 ("Network or registry \"ping\" tweaks", "Ping depends on the route to the game server; local tweaks have no credible evidence."),
@@ -1043,14 +1111,13 @@ impl App {
             }
         }
         ui.add_space(S3);
-        let build = self.build;
         let q = self.gaming.game_search.to_lowercase();
         let searching = self.gaming.games_job.running();
-        let mut error = None;
-        let (mut play, mut settings) = (None, None);
+        let (mut play, mut open) = (None, None);
         group(ui, |ui| {
-            let mut shown = self.gaming.games.iter_mut().filter(|g| q.is_empty() || g.name.to_lowercase().contains(&q)).peekable();
-            if shown.peek().is_none() {
+            let shown: Vec<(usize, &Game)> =
+                self.gaming.games.iter().enumerate().filter(|(_, g)| q.is_empty() || g.name.to_lowercase().contains(&q)).collect();
+            if shown.is_empty() {
                 if searching {
                     row(ui, 0, |ui| progress(ui, "Looking for Steam, Epic, GOG, Battle.net, EA, Riot, Ubisoft and Rockstar games…"));
                 } else if q.is_empty() {
@@ -1059,17 +1126,16 @@ impl App {
                     empty_state(ui, "No matches", "No game name matches your search.");
                 }
             }
-            for (i, game) in shown.enumerate() {
-                row(ui, i, |ui| {
+            for (row_i, (i, game)) in shown.into_iter().enumerate() {
+                row(ui, row_i, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(&game.name).color(TEXT));
+                        if ui.add(Label::new(RichText::new(&game.name).color(TEXT)).sense(Sense::click())).on_hover_text("Open").clicked() {
+                            open = Some(i);
+                        }
                         caption(ui, game.source);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if row_button(ui, true, "Game settings")
-                                .on_hover_text("Quality, Balanced or Performance presets for the game's own graphics settings.")
-                                .clicked()
-                            {
-                                settings = Some((game.name.clone(), game.exe().to_string()));
+                            if row_button(ui, true, "Open").on_hover_text("Measure, tune and set up this game").clicked() {
+                                open = Some(i);
                             }
                             if row_button(ui, true, "Play")
                                 .on_hover_text("Turns on Game Mode with this game's profile, then starts the game.")
@@ -1077,61 +1143,16 @@ impl App {
                             {
                                 play = Some(game.exe().to_string());
                             }
-                            ui.add_space(S2);
-                            let file = |p: &str| Path::new(p).file_name().map_or(p.to_string(), |f| f.to_string_lossy().into_owned());
-                            if game.exes.len() > 1 {
-                                let before = game.chosen;
-                                egui::ComboBox::from_id_salt(("exe", i)).selected_text(file(game.exe())).show_ui(ui, |ui| {
-                                    for (n, e) in game.exes.iter().enumerate() {
-                                        ui.selectable_value(&mut game.chosen, n, file(e)).on_hover_text(e);
-                                    }
-                                });
-                                if game.chosen != before {
-                                    game.refresh();
-                                }
-                            } else {
-                                caption(ui, file(game.exe())).on_hover_text(game.exe());
-                            }
                         });
-                    });
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = S6;
-                        for (n, s) in GameSetting::ALL.into_iter().enumerate() {
-                            let (on, by_kestrel) = game.status[n];
-                            let mut want = on;
-                            let why = s.unsupported(build);
-                            let mut hint = s.desc().to_string();
-                            if on && !by_kestrel {
-                                hint.push_str("\n\nSet outside Kestrel (in Windows or by another app). Turning it off returns this game to the Windows default.");
-                            }
-                            let r = ui.add_enabled_ui(why.is_none(), |ui| checkbox(ui, &mut want, RichText::new(s.label()).size(CAPTION + 1.0).color(TEXT_2))).inner;
-                            let r = r.on_hover_text(hint);
-                            let r = match why {
-                                Some(w) => r.on_disabled_hover_text(w),
-                                None => r,
-                            };
-                            if r.changed() {
-                                let exe = game.exe().to_string();
-                                if let Err(e) = if want { s.apply(&exe) } else { s.undo(&exe) } {
-                                    error = Some(e);
-                                }
-                                game.refresh();
-                            }
-                        }
                     });
                 });
             }
         });
-        ui.add_space(S2);
-        caption(ui, "Each option is the same per-program switch Windows uses (Settings > Graphics, and the program's Compatibility tab). Changes take effect the next time the game starts and can be turned off again.");
-        if let Some(e) = error {
-            self.show_error("Couldn't change the game setting", e);
-        }
         if let Some(exe) = play {
             self.play(ui.ctx(), &exe);
         }
-        if let Some((name, exe)) = settings {
-            self.open_game_settings(name, exe);
+        if let Some(i) = open {
+            self.open_game(i);
         }
     }
 
@@ -1332,7 +1353,7 @@ impl App {
                         }
                         if !self.opt.startup_off.is_empty() {
                             heading(ui, "Apps that don't need to start with Windows");
-                            caption(ui, "They keep running in the background and use memory while you play. They still open normally when you start them. Undo on the Startup apps page.");
+                            caption(ui, "They keep running in the background and use memory while you play. They still open normally when you start them. Undo under Windows > Startup apps.");
                             for (e, on, why) in &mut self.opt.startup_off {
                                 checkbox(ui, on, e.name.as_str()).on_hover_text(*why);
                             }
@@ -1385,7 +1406,7 @@ impl App {
                         if !self.opt.attention.is_empty() {
                             heading(ui, "Only you can fix");
                             ui.label(
-                                RichText::new(format!("{}. Details and buttons: Overview > Status, or measure a game on Gaming > Measure.", self.opt.attention.join(", ")))
+                                RichText::new(format!("{}. Details and buttons: Home > Status, or measure a game under Games.", self.opt.attention.join(", ")))
                                     .size(CAPTION)
                                     .color(TEXT_2),
                             );
@@ -1448,9 +1469,9 @@ impl App {
                     secondary(
                         ui,
                         if restart {
-                            "Some changes need a restart. Afterwards, measure a game on Gaming > Measure to see the difference."
+                            "Some changes need a restart. Afterwards, measure a game under Games to see the difference."
                         } else {
-                            "Measure a game on Gaming > Measure to see the difference."
+                            "Measure a game under Games to see the difference."
                         },
                     );
                     dialog_buttons(ui, |ui| {
@@ -1538,7 +1559,15 @@ pub(super) fn tweak_rows(ui: &mut Ui, g: &mut GamingState, shown: Vec<Tweak>, bu
                     })
                     .inner;
                 // Hand-picking gaming settings turns the preset into Custom; privacy settings aren't in presets.
-                if r.on_hover_text(format!("Benefit: {}", info.benefit)).changed() && !t.is_privacy() {
+                if r.on_hover_text(format!(
+                    "Benefit: {}
+
+Trade-off: {}",
+                    info.benefit, info.drawback
+                ))
+                .changed()
+                    && !t.is_privacy()
+                {
                     g.preset = Preset::Custom;
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1561,9 +1590,6 @@ pub(super) fn tweak_rows(ui: &mut Ui, g: &mut GamingState, shown: Vec<Tweak>, bu
                 ui.vertical(|ui| {
                     ui.set_max_width((ui.available_width() - CONTROL_COL + 60.0).max(240.0));
                     ui.label(RichText::new(unsupported.as_deref().unwrap_or(info.purpose)).size(CAPTION).color(TEXT_2));
-                    if unsupported.is_none() {
-                        caption(ui, format!("Trade-off: {}", info.drawback));
-                    }
                 });
             });
         });
@@ -1574,7 +1600,7 @@ pub(super) fn tweak_rows(ui: &mut Ui, g: &mut GamingState, shown: Vec<Tweak>, bu
 fn restore_all_confirm() -> Confirm {
     Confirm {
         title: "Restore original settings?".into(),
-        body: "Everything Kestrel changed goes back to the value saved before the change: gaming settings, startup apps, per-game settings and display refresh rates.".into(),
+        body: "Everything Kestrel changed goes back to the value saved before the change: Windows settings, startup apps, services, per-game settings and display refresh rates.".into(),
         warning: None,
         ok: "Restore",
         action: Action::RestoreAll,

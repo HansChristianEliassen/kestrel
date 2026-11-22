@@ -5,6 +5,7 @@ mod cleaner;
 mod gamemode;
 mod logo;
 mod optimizer;
+mod services;
 mod startup;
 mod system;
 mod ui;
