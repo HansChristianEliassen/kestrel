@@ -7,19 +7,23 @@ use super::health::{self, Check};
 use super::measure::Stats;
 use super::Tweak;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 pub enum Fix {
     Tweak(Tweak),
     /// Run this game (exe path) on the high-performance GPU.
     GameGpu(String),
     /// Displays below their maximum refresh rate: (device, current Hz, max Hz). Uses the keep-or-revert dialog.
     Refresh(Vec<(String, u32, u32)>),
+    /// Stop these apps from starting with Windows (the reversible Startup apps switch).
+    Startup(Vec<crate::startup::StartupEntry>),
+    /// Add this game (exe path) to Game Mode with the Performance profile, and turn on automatic Game Mode.
+    GameModeFor(String),
 }
 
 /// A button to the right place: (label, URI).
 pub type Link = Option<(&'static str, &'static str)>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Advice {
     /// Fixes Kestrel can apply: (title, why it helps, fix).
     pub auto: Vec<(String, String, Fix)>,
@@ -44,9 +48,10 @@ pub fn verdict(s: &Stats) -> (bool, String) {
 }
 
 /// Looks for causes on this PC (reads settings and runs the health checks; takes a few seconds).
-pub fn advise(exe: &str, build: u32) -> Advice {
+/// `in_game_mode`: the game is already in the Game Mode list with automatic Game Mode on.
+pub fn advise(exe: &str, build: u32, in_game_mode: bool) -> Advice {
     let mut auto = Vec::new();
-    for t in [Tweak::GameMode, Tweak::GameDvrOff, Tweak::WindowedGames, Tweak::PowerMode] {
+    for t in [Tweak::GameMode, Tweak::GameDvrOff, Tweak::WindowedGames, Tweak::PowerMode, Tweak::GpuScheduling] {
         if t.unsupported(build).is_none() && !t.is_applied() && t.not_needed().is_none() {
             let info = t.info();
             auto.push((info.title.to_string(), info.benefit.to_string(), Fix::Tweak(t)));
@@ -61,8 +66,35 @@ pub fn advise(exe: &str, build: u32) -> Advice {
             Fix::GameGpu(exe.to_string()),
         ));
     }
+    let file = std::path::Path::new(exe).file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if !in_game_mode && crate::gamemode::watch::protected(&file).is_none() {
+        auto.push((
+            "Game Mode for this game".into(),
+            "While you play, background apps in your list get efficiency mode and power settings switch to performance; all undone when the game closes.".into(),
+            Fix::GameModeFor(exe.to_string()),
+        ));
+    }
+    let entries = crate::startup::list();
+    let startup: Vec<crate::startup::StartupEntry> =
+        crate::startup::recommended(&entries).into_iter().filter(|(_, on, _)| *on).map(|(i, ..)| entries[i].clone()).collect();
+    if !startup.is_empty() {
+        let names: Vec<&str> = startup.iter().map(|e| e.name.as_str()).collect();
+        auto.push((
+            format!("Stop {} from starting with Windows", names.join(", ")),
+            "They keep running in the background and use memory and processor time while you play. They still open when you start them."
+                .into(),
+            Fix::Startup(startup),
+        ));
+    }
     let checks = health::run();
     let mut manual = Vec::new();
+    if !Tweak::MemoryIntegrityOff.is_applied() {
+        manual.push((
+            "Memory integrity is on".to_string(),
+            "This Windows security feature costs about 4 to 10 percent in games limited by the processor. Turning it off is a security trade-off, so Kestrel never does it on its own: it's offered in Overview > Set up this PC for gaming, or you can change it in Windows Security.".to_string(),
+            Some(("Open Core isolation", "windowsdefender://coreisolation")),
+        ));
+    }
     for c in checks {
         if !c.refresh_fix.is_empty() {
             let (_, cur, max) = c.refresh_fix[0];

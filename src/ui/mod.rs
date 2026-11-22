@@ -181,15 +181,17 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 4.0;
-                        ui.label(RichText::new("Optimize PC").font(semibold(16.0)).color(TEXT));
+                        ui.label(RichText::new("Set up this PC for gaming").font(semibold(16.0)).color(TEXT));
                         ui.label(
-                            RichText::new("Finds junk files and the gaming settings that would help this PC, then shows every change for you to approve.")
-                                .size(CAPTION + 1.0)
-                                .color(TEXT_2),
+                            RichText::new(
+                                "Finds what slows games on this PC and fixes it in one go. You see the list first; all can be undone.",
+                            )
+                            .size(CAPTION + 1.0)
+                            .color(TEXT_2),
                         );
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        optimize = accent_button(ui, self.opt.stage == OptStage::Closed, "Review changes").clicked();
+                        optimize = accent_button(ui, self.opt.stage == OptStage::Closed, "Start").clicked();
                     });
                 });
             });
@@ -951,7 +953,10 @@ impl App {
                 let shown: Vec<Tweak> = Tweak::ALL
                     .into_iter()
                     .filter(|t| {
-                        !t.is_privacy() && Preset::Balanced.includes(*t) == recommended && (*t != Tweak::NoBackgroundApps || has_backup(t))
+                        !t.is_privacy()
+                            && *t != Tweak::MemoryIntegrityOff
+                            && Preset::Balanced.includes(*t) == recommended
+                            && (*t != Tweak::NoBackgroundApps || has_backup(t))
                     })
                     .collect();
                 if let Some(t) = tweak_rows(ui, g, shown, build) {
@@ -959,6 +964,21 @@ impl App {
                 }
             });
         }
+        ui.add_space(S4);
+        egui::CollapsingHeader::new(RichText::new("What Kestrel doesn't do, and why").color(TEXT_2)).show(ui, |ui| {
+            for (what, why) in [
+                ("Strip or \"debloat\" Windows, or install a custom Windows", "Independent tests of debloated builds found no real FPS gain, and undoing them means reinstalling Windows. Apps that aren't running don't slow games."),
+                ("Turn off Windows services or Microsoft Defender", "No measured gain, and it breaks features (Store, Xbox, updates) or leaves the PC unprotected."),
+                ("Change timer resolution, HPET or boot settings", "Modern Windows already handles timers per app; tests show no gain, and some of these settings make games slower."),
+                ("\"Clean\" memory or close apps by force", "Windows manages memory itself; force-closing apps loses their work. Game Mode's efficiency mode is the safe way to quiet background apps."),
+                ("Network or registry \"ping\" tweaks", "Ping depends on the route to the game server; local tweaks have no credible evidence."),
+                ("Delete shader caches automatically", "Games rebuild them, which causes stutter the next time you play."),
+            ] {
+                ui.label(RichText::new(what).color(TEXT));
+                caption(ui, why);
+                ui.add_space(S1);
+            }
+        });
         if let Some(t) = revert {
             self.start_restore(ui.ctx(), vec![t], false);
         }
@@ -1260,12 +1280,12 @@ impl App {
 
     pub(crate) fn optimize_dialog(&mut self, ctx: &egui::Context) {
         let mut next = None;
-        let mut apply = false;
+        let (mut apply, mut restart_now) = (false, false);
         let admin = self.admin;
-        let (_, close) = dialog(ctx, "optimize", 520.0, |ui| {
-            dialog_title(ui, "Optimize PC");
+        let (_, close) = dialog(ctx, "optimize", 560.0, |ui| {
+            dialog_title(ui, "Set up this PC for gaming");
             match &self.opt.stage {
-                OptStage::Scanning => progress(ui, "Looking for junk files and recommended settings…"),
+                OptStage::Scanning => progress(ui, "Checking what slows games down on this PC…"),
                 OptStage::Applying => progress(ui, "Applying your approved changes…"),
                 OptStage::Review => {
                     secondary(ui, "Untick anything you don't want. Nothing changes until you confirm.");
@@ -1276,7 +1296,7 @@ impl App {
                             ui.label(strong(text));
                             ui.add_space(S1);
                         };
-                        heading(ui, "Gaming settings");
+                        heading(ui, "Windows settings");
                         if self.opt.tweaks.is_empty() {
                             caption(ui, "All recommended settings are already on.");
                         } else if self.opt.already_active > 0 {
@@ -1284,13 +1304,47 @@ impl App {
                         }
                         for (t, on) in &mut self.opt.tweaks {
                             let info = t.info();
-                            checkbox(ui, on, info.title).on_hover_text(format!("{}\n\nTrade-off: {}", info.purpose, info.drawback));
+                            let label = match t.takes_effect() {
+                                Some(when) => format!("{} ({when})", info.title),
+                                None => info.title.to_string(),
+                            };
+                            let allowed = admin || !t.needs_admin();
+                            ui.add_enabled_ui(allowed, |ui| checkbox(ui, on, label))
+                                .response
+                                .on_hover_text(format!("{}\n\nTrade-off: {}", info.purpose, info.drawback))
+                                .on_disabled_hover_text("Needs administrator rights (Settings > Restart as administrator).");
                         }
                         if !self.opt.refresh.is_empty() {
                             heading(ui, "Display");
                             let list = self.opt.refresh.iter().map(|(_, c, m)| format!("{c} Hz to {m} Hz")).collect::<Vec<_>>().join(", ");
                             checkbox(ui, &mut self.opt.refresh_on, format!("Raise refresh rate ({list})"))
                                 .on_hover_text("Switches back after 15 seconds unless you press Keep, so a black screen fixes itself.");
+                        }
+                        if !self.opt.startup_off.is_empty() {
+                            heading(ui, "Apps that don't need to start with Windows");
+                            caption(ui, "They keep running in the background and use memory while you play. They still open normally when you start them. Undo on the Startup apps page.");
+                            for (e, on, why) in &mut self.opt.startup_off {
+                                checkbox(ui, on, e.name.as_str()).on_hover_text(*why);
+                            }
+                        }
+                        if self.opt.gm_on || !self.opt.gm_games.is_empty() {
+                            heading(ui, "Your games");
+                            let n = self.opt.gm_games.len();
+                            let label = if n > 0 {
+                                format!("Game Mode turns on by itself for your {n} game{}", if n == 1 { "" } else { "s" })
+                            } else {
+                                "Game Mode turns on by itself when a game in your list starts".to_string()
+                            };
+                            checkbox(ui, &mut self.opt.gm_on, label).on_hover_text(
+                                "While you play, apps in your background list get efficiency mode and the power settings switch to performance. Everything goes back when the game closes.",
+                            );
+                            if n > 0 {
+                                let names: Vec<&str> = self.opt.gm_games.iter().map(|(name, _)| name.as_str()).collect();
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.add_space(26.0);
+                                    caption(ui, names.join(", "));
+                                });
+                            }
                         }
                         heading(ui, "Files");
                         if self.opt.items.is_empty() {
@@ -1308,16 +1362,41 @@ impl App {
                                 });
                             }
                         }
-                        heading(ui, "Also worth a look");
-                        let mut notes = vec![format!(
-                            "{} apps start with Windows. Review them under Startup apps; Kestrel never turns them off by itself.",
-                            self.opt.startup_enabled
-                        )];
-                        if !self.opt.attention.is_empty() {
-                            notes.push(format!("{} (see Overview > Status).", self.opt.attention.join(", ")));
+                        if !self.opt.extras.is_empty() {
+                            heading(ui, "Optional");
+                            let n = self.opt.extras.len();
+                            checkbox(ui, &mut self.opt.extras_on, format!("Remove {n} preinstalled extra{}", if n == 1 { "" } else { "s" }))
+                                .on_hover_text(self.opt.extras.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join("\n"));
+                            ui.horizontal_wrapped(|ui| {
+                                ui.add_space(26.0);
+                                caption(ui, "Frees space and clutter; it doesn't raise FPS, because these apps don't run while you play. Xbox apps and the Store are kept. Reinstall any of them from the Microsoft Store.");
+                            });
                         }
-                        for n in notes {
-                            ui.label(RichText::new(n).size(CAPTION).color(TEXT_2));
+                        if !self.opt.attention.is_empty() {
+                            heading(ui, "Only you can fix");
+                            ui.label(
+                                RichText::new(format!("{}. Details and buttons: Overview > Status, or measure a game on Gaming > Measure.", self.opt.attention.join(", ")))
+                                    .size(CAPTION)
+                                    .color(TEXT_2),
+                            );
+                        }
+                        if let Some(on) = &mut self.opt.memory_integrity {
+                            ui.add_space(S3);
+                            egui::Frame::default()
+                                .fill(CAUTION.gamma_multiply(0.08))
+                                .stroke(egui::Stroke::new(1.0_f32, CAUTION.gamma_multiply(0.5)))
+                                .corner_radius(egui::CornerRadius::same(R_CONTROL))
+                                .inner_margin(egui::Margin::same(12))
+                                .show(ui, |ui| {
+                                    ui.add_enabled_ui(admin, |ui| checkbox(ui, on, strong("Maximum performance: turn off memory integrity")))
+                                        .response
+                                        .on_disabled_hover_text("Needs administrator rights (Settings > Restart as administrator).");
+                                    ui.label(
+                                        RichText::new("Memory integrity protects Windows against malicious drivers. Turning it off gives about 4 to 10 percent more FPS in games limited by the processor. Leave it on if this PC is for work, or if a game's anti-cheat requires it. Needs a restart; you can turn it back on with Revert or in Windows Security.")
+                                            .size(CAPTION)
+                                            .color(TEXT_2),
+                                    );
+                                });
                         }
                     });
                     ui.add_space(S3);
@@ -1335,7 +1414,11 @@ impl App {
                 }
                 OptStage::Confirm => {
                     let n = self.opt.tweaks.iter().filter(|(_, on)| *on).count()
-                        + usize::from(self.opt.refresh_on && !self.opt.refresh.is_empty());
+                        + usize::from(self.opt.refresh_on && !self.opt.refresh.is_empty())
+                        + self.opt.startup_off.iter().filter(|(_, on, _)| *on).count()
+                        + usize::from(self.opt.gm_on)
+                        + usize::from(self.opt.memory_integrity == Some(true))
+                        + usize::from(self.opt.extras_on && !self.opt.extras.is_empty());
                     let (files, bytes) =
                         self.opt.items.iter().filter(|i| i.selected).fold((0, 0), |(c, b), i| (c + i.found.count, b + i.found.bytes));
                     ui.label(format!("Apply {n} setting change(s) and delete {files} item(s) ({})?", fmt_bytes(bytes)));
@@ -1350,15 +1433,36 @@ impl App {
                 }
                 OptStage::Done(lines) => {
                     egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| result_summary(ui, lines));
+                    let restart = lines.iter().any(|l| l.starts_with("\u{2714}") && l.contains("after a restart"));
+                    ui.add_space(S2);
+                    secondary(
+                        ui,
+                        if restart {
+                            "Some changes need a restart. Afterwards, measure a game on Gaming > Measure to see the difference."
+                        } else {
+                            "Measure a game on Gaming > Measure to see the difference."
+                        },
+                    );
                     dialog_buttons(ui, |ui| {
                         if accent_button(ui, true, "Close").clicked() {
                             next = Some(OptStage::Closed);
+                        }
+                        if restart && button(ui, true, "Restart now").clicked() {
+                            restart_now = true;
                         }
                     });
                 }
                 OptStage::Closed => {}
             }
         });
+        if restart_now {
+            // Windows restarts and Kestrel closes normally on the way (ending Game Mode if it's on).
+            if let Err(e) =
+                crate::system::run_hidden("shutdown.exe", &["/r", "/t", "5", "/c", "Kestrel: restarting to finish the gaming setup."])
+            {
+                self.show_error("Restart", e);
+            }
+        }
         let idle = matches!(self.opt.stage, OptStage::Review | OptStage::Done(_));
         if close && idle && next.is_none() {
             next = Some(OptStage::Closed);

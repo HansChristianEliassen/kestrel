@@ -197,6 +197,87 @@ impl App {
         self.gamemode.last_check = std::time::Instant::now();
     }
 
+    /// Applies (or with `undo`, reverts) the fixes suggested after measuring. Each kind uses its own reversible path.
+    fn apply_fixes(&mut self, ctx: &egui::Context, fixes: Vec<crate::optimizer::advice::Fix>, undo: bool) {
+        use crate::optimizer::advice::Fix;
+        use crate::optimizer::gaming::GameSetting;
+        let (mut tweaks, mut gpu, mut startup_apps, mut lines) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for fix in &fixes {
+            match fix {
+                Fix::Tweak(t) => tweaks.push(*t),
+                Fix::GameGpu(exe) => gpu.push(exe.clone()),
+                Fix::Startup(list) => startup_apps.extend(list.iter().cloned()),
+                Fix::Refresh(list) if undo => lines.extend(health::restore_displays()),
+                Fix::Refresh(list) => self.try_refresh_fix(list.clone()),
+                Fix::GameModeFor(exe) => {
+                    let file = std::path::Path::new(exe).file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
+                    let cfg = &mut self.gamemode.config;
+                    if undo {
+                        // Automatic Game Mode stays on: other games in the list may rely on it.
+                        cfg.games.retain(|g| g.file_name() != file);
+                    } else if !cfg.games.iter().any(|g| g.file_name() == file) {
+                        cfg.games.push(gamemode::GameEntry { exe: exe.clone(), profile: gamemode::Profile::Performance });
+                    }
+                    if !undo {
+                        cfg.auto = true;
+                    }
+                    lines.push(match cfg.save() {
+                        Ok(()) if undo => "\u{2714} Removed the game from Game Mode".to_string(),
+                        Ok(()) => "\u{2714} Game Mode turns on by itself for this game".to_string(),
+                        Err(e) => format!("\u{2716} Game Mode: {e}"),
+                    });
+                }
+            }
+        }
+        if let Some(m) = &mut self.gaming.last {
+            if undo {
+                m.applied.clear();
+            } else {
+                m.advice.auto.clear();
+                m.applied = fixes;
+            }
+        }
+        if !startup_apps.is_empty() {
+            self.startup.loaded = false;
+        }
+        if undo {
+            // Tweaks go back through the normal restore path (refused while Game Mode is on, with a message).
+            self.start_restore(ctx, tweaks, false);
+            for exe in gpu {
+                lines.push(match GameSetting::HighPerfGpu.undo(&exe) {
+                    Ok(()) => "\u{2714} The game uses Windows' default graphics card again".into(),
+                    Err(e) => format!("\u{2716} Graphics card: {e}"),
+                });
+            }
+            for e in &startup_apps {
+                lines.push(match startup::set_enabled(e, true) {
+                    Ok(()) => format!("\u{2714} Starts with Windows again: {}", e.name),
+                    Err(err) => format!("\u{2716} {}: {err}", e.name),
+                });
+            }
+            if !lines.is_empty() {
+                self.show_notice("Fixes undone", lines.join("\n"));
+            }
+            return;
+        }
+        self.gaming.apply.start(ctx, move || {
+            lines.extend(apply_tweaks(&tweaks));
+            for exe in gpu {
+                lines.push(match GameSetting::HighPerfGpu.apply(&exe) {
+                    Ok(()) => "\u{2714} The game now uses the fast graphics card (next time it starts)".into(),
+                    Err(e) => format!("\u{2716} Fast graphics card: {e}"),
+                });
+            }
+            for e in &startup_apps {
+                lines.push(match startup::set_enabled(e, false) {
+                    Ok(()) => format!("\u{2714} Doesn't start with Windows anymore: {}", e.name),
+                    Err(err) => format!("\u{2716} {}: {err}", e.name),
+                });
+            }
+            lines
+        });
+    }
+
     /// Measures a running game for `measure::SECONDS` in the background.
     pub(crate) fn start_measure(&mut self, ctx: &egui::Context, name: String, exe: &str) {
         use crate::optimizer::measure;
@@ -228,9 +309,10 @@ impl App {
         }
         self.gaming.measuring = Some((name.clone(), std::time::Instant::now()));
         let (path, build) = (exe.to_string(), self.build);
+        let in_game_mode = self.gamemode.config.auto && self.gamemode.config.games.iter().any(|g| g.file_name() == file);
         self.gaming.measure.start(ctx, move || {
             // The advice is gathered right away, while the game is still open, so it matches what was measured.
-            let result = measure::capture(&file).map(|s| (s, crate::optimizer::advice::advise(&path, build)));
+            let result = measure::capture(&file).map(|s| (s, crate::optimizer::advice::advise(&path, build, in_game_mode)));
             (name, file, result)
         });
     }
@@ -478,9 +560,18 @@ impl App {
     pub(crate) fn start_optimize(&mut self, ctx: &egui::Context) {
         self.opt.stage = OptStage::Scanning;
         let build = self.build;
+        let known: Vec<String> = self.gamemode.config.games.iter().map(|g| g.file_name()).collect();
+        let games: Vec<(String, String)> = self.gaming.games.iter().map(|g| (g.name.clone(), g.exe().to_string())).collect();
+        let auto_on = self.gamemode.config.auto;
         self.opt.scan.start(ctx, move || {
-            let recommended: Vec<Tweak> =
-                Tweak::ALL.into_iter().filter(|t| Preset::Performance.includes(*t) && t.unsupported(build).is_none()).collect();
+            // The Performance preset, plus the machine-wide settings that help games (never part of a preset).
+            let recommended: Vec<Tweak> = Tweak::ALL
+                .into_iter()
+                .filter(|t| {
+                    (Preset::Performance.includes(*t) || matches!(t, Tweak::GpuScheduling | Tweak::DeliveryUploadOff))
+                        && t.unsupported(build).is_none()
+                })
+                .collect();
             // A correctly configured PC shouldn't be offered changes: settings already on or without effect here are left out.
             let (active, tweaks): (Vec<Tweak>, Vec<Tweak>) =
                 recommended.into_iter().partition(|t| t.is_applied() || t.not_needed().is_some());
@@ -493,7 +584,24 @@ impl App {
                     attention.push(c.title);
                 }
             }
+            let entries = startup::list();
+            let startup_off = startup::recommended(&entries).into_iter().map(|(i, on, why)| (entries[i].clone(), on, why)).collect();
+            // Detected games not yet in the Game Mode list (or none, when automatic Game Mode is already on for all).
+            let gm_games: Vec<(String, String)> = games
+                .into_iter()
+                .filter(|(_, exe)| {
+                    let file = std::path::Path::new(exe).file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
+                    // Windows components (like explorer.exe) always run, so Game Mode would never end.
+                    !known.contains(&file) && gamemode::watch::protected(&file).is_none()
+                })
+                .collect();
+            let extras: Vec<uninstaller::InstalledApp> =
+                uninstaller::list().0.into_iter().filter(|a| a.optional && a.blocked().is_none()).collect();
             OptScan {
+                memory_integrity: !Tweak::MemoryIntegrityOff.is_applied(),
+                startup_off,
+                gm_games: if gm_games.is_empty() && auto_on { Vec::new() } else { gm_games },
+                extras,
                 tweaks,
                 already_active: active.len(),
                 items: scan_all().into_iter().filter(|i| i.found.count > 0).collect(),
@@ -575,33 +683,8 @@ impl App {
             // Reverse order: per-plan power settings are restored before the power plan itself switches back.
             Action::RestoreAll => self.start_restore(ctx, Tweak::ALL.into_iter().rev().collect(), true),
             Action::InstallUpdate => self.install_update(ctx),
-            Action::ApplyFixes(fixes) => {
-                use crate::optimizer::advice::Fix;
-                let mut tweaks = Vec::new();
-                let mut gpu = Vec::new();
-                for fix in fixes {
-                    match fix {
-                        Fix::Tweak(t) => tweaks.push(t),
-                        Fix::GameGpu(exe) => gpu.push(exe),
-                        Fix::Refresh(list) => self.try_refresh_fix(list),
-                    }
-                }
-                // Fixes are applied once; the next measurement shows what they did.
-                if let Some(m) = &mut self.gaming.last {
-                    m.advice.auto.clear();
-                    m.applied = true;
-                }
-                self.gaming.apply.start(ctx, move || {
-                    let mut lines = apply_tweaks(&tweaks);
-                    for exe in gpu {
-                        lines.push(match crate::optimizer::gaming::GameSetting::HighPerfGpu.apply(&exe) {
-                            Ok(()) => "\u{2714} The game now uses the fast graphics card (next time it starts)".into(),
-                            Err(e) => format!("\u{2716} Fast graphics card: {e}"),
-                        });
-                    }
-                    lines
-                });
-            }
+            Action::ApplyFixes(fixes) => self.apply_fixes(ctx, fixes, false),
+            Action::UndoFixes(fixes) => self.apply_fixes(ctx, fixes, true),
             Action::UpdateApps(apps) => self.start_app_queue(ctx, apps, false),
             Action::InstallApps(apps) => self.start_app_queue(ctx, apps, true),
             Action::InstallDrivers(drivers) => {
@@ -653,7 +736,35 @@ impl App {
     }
 
     pub(crate) fn apply_optimize(&mut self, ctx: &egui::Context) {
-        let tweaks: Vec<Tweak> = self.opt.tweaks.iter().filter(|(_, on)| *on).map(|(t, _)| *t).collect();
+        let mut tweaks: Vec<Tweak> = self.opt.tweaks.iter().filter(|(_, on)| *on).map(|(t, _)| *t).collect();
+        if self.opt.memory_integrity == Some(true) {
+            tweaks.push(Tweak::MemoryIntegrityOff);
+        }
+        let startup_off: Vec<startup::StartupEntry> =
+            self.opt.startup_off.iter().filter(|(_, on, _)| *on).map(|(e, ..)| e.clone()).collect();
+        if !startup_off.is_empty() {
+            self.startup.loaded = false; // reload the Startup apps page on its next visit
+        }
+        // Game Mode for the detected games: added with the Performance profile, and automatic Game Mode turned on.
+        let mut gm_line = None;
+        if self.opt.gm_on {
+            let cfg = &mut self.gamemode.config;
+            for (_, exe) in &self.opt.gm_games {
+                cfg.games.push(gamemode::GameEntry { exe: exe.clone(), profile: gamemode::Profile::Performance });
+            }
+            cfg.auto = true;
+            gm_line = Some(match cfg.save() {
+                Ok(()) => format!(
+                    "\u{2714} Game Mode turns on by itself for your games{}",
+                    if self.opt.gm_games.is_empty() { String::new() } else { format!(" ({} added)", self.opt.gm_games.len()) }
+                ),
+                Err(e) => format!("\u{2716} Game Mode for your games: {e}"),
+            });
+        }
+        if self.opt.extras_on && !self.opt.extras.is_empty() {
+            let extras = std::mem::take(&mut self.opt.extras);
+            self.run(Action::Uninstall(extras), ctx);
+        }
         let items: Vec<_> = std::mem::take(&mut self.opt.items).into_iter().filter(|i| i.selected).collect();
         let restore_point = self.opt.restore_point;
         self.opt.stage = OptStage::Applying;
@@ -666,6 +777,13 @@ impl App {
                 }
             }
             lines.extend(apply_tweaks(&tweaks));
+            for e in &startup_off {
+                lines.push(match startup::set_enabled(e, false) {
+                    Ok(()) => format!("\u{2714} Doesn't start with Windows anymore: {}", e.name),
+                    Err(err) => format!("\u{2716} {}: {err}", e.name),
+                });
+            }
+            lines.extend(gm_line);
             lines.extend(clean_items(&items));
             lines
         });
@@ -799,7 +917,7 @@ impl App {
                     let text = crate::optimizer::measure::describe(&stats, before.as_ref());
                     log(&format!("Measure {file}: {text}"));
                     self.show_notice(&format!("{name}: measured"), format!("{text}. Details and fixes are on Gaming > Measure."));
-                    self.gaming.last = Some(Measured { name, stats, before, advice, applied: false });
+                    self.gaming.last = Some(Measured { name, stats, before, advice, applied: Vec::new() });
                 }
                 Err(e) => self.show_error(&format!("{name}: not measured"), e),
             }
@@ -829,7 +947,14 @@ impl App {
             self.gaming.games.iter_mut().for_each(|g| g.refresh());
         }
         if let Some(found) = self.opt.scan.poll() {
-            self.opt.tweaks = found.tweaks.into_iter().map(|t| (t, true)).collect();
+            // Machine-wide settings can only be applied as administrator, so they start unticked otherwise.
+            self.opt.tweaks = found.tweaks.into_iter().map(|t| (t, self.admin || !t.needs_admin())).collect();
+            self.opt.memory_integrity = found.memory_integrity.then_some(false);
+            self.opt.startup_off = found.startup_off;
+            self.opt.gm_on = !found.gm_games.is_empty() || !self.gamemode.config.auto;
+            self.opt.gm_games = found.gm_games;
+            self.opt.extras = found.extras;
+            self.opt.extras_on = false;
             self.opt.already_active = found.already_active;
             self.opt.items = found.items;
             self.opt.startup_enabled = found.startup_enabled;

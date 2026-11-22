@@ -111,6 +111,8 @@ pub enum Action {
     InstallApps(Vec<AppUpdate>),
     /// The automatic fixes suggested after measuring a game.
     ApplyFixes(Vec<crate::optimizer::advice::Fix>),
+    /// Reverts the fixes applied from the last measurement.
+    UndoFixes(Vec<crate::optimizer::advice::Fix>),
     /// Restore point first, then download and install these drivers from Windows Update.
     InstallDrivers(Vec<DriverUpdate>),
 }
@@ -224,8 +226,8 @@ pub struct Measured {
     /// The measurement before this one, for the comparison.
     pub before: Option<crate::optimizer::measure::Stats>,
     pub advice: crate::optimizer::advice::Advice,
-    /// "Apply fixes" was used; the next measurement shows the difference.
-    pub applied: bool,
+    /// Fixes applied from this result (kept for Undo); the next measurement shows the difference.
+    pub applied: Vec<crate::optimizer::advice::Fix>,
 }
 
 pub struct GamingState {
@@ -384,6 +386,14 @@ pub struct OptScan {
     pub refresh: Vec<(String, u32, u32)>,
     /// Titles of other health checks that need attention (report only).
     pub attention: Vec<&'static str>,
+    /// Memory integrity is on (offered, unticked, behind a warning).
+    pub memory_integrity: bool,
+    /// Startup apps worth turning off: (entry, ticked by default, why).
+    pub startup_off: Vec<(StartupEntry, bool, &'static str)>,
+    /// Detected games not yet in the Game Mode list: (name, exe).
+    pub gm_games: Vec<(String, String)>,
+    /// Preinstalled extras that can be removed (Store apps, reinstallable).
+    pub extras: Vec<InstalledApp>,
 }
 
 #[derive(Default)]
@@ -399,6 +409,14 @@ pub struct OptState {
     pub refresh: Vec<(String, u32, u32)>,
     pub refresh_on: bool,
     pub attention: Vec<&'static str>,
+    /// None when memory integrity is already off; Some(ticked) when it's offered.
+    pub memory_integrity: Option<bool>,
+    pub startup_off: Vec<(StartupEntry, bool, &'static str)>,
+    pub gm_games: Vec<(String, String)>,
+    /// "Game Mode for your games" is ticked.
+    pub gm_on: bool,
+    pub extras: Vec<InstalledApp>,
+    pub extras_on: bool,
 }
 
 /// The Updates page: app updates through winget, driver updates through Windows Update.

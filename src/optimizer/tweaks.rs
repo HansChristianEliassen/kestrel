@@ -36,6 +36,11 @@ pub enum Tweak {
     HighPerfPower,
     UsbSuspendOff,
     NoMouseAccel,
+    // Machine-wide (administrator, take effect after a restart where noted). Never in a preset.
+    GpuScheduling,
+    DeliveryUploadOff,
+    /// Security trade-off: offered only in the gaming setup, behind its own warning.
+    MemoryIntegrityOff,
     // Privacy (Privacy page only; never in a preset).
     PrivacyAdId,
     PrivacyTailored,
@@ -54,7 +59,7 @@ pub struct Info {
 }
 
 impl Tweak {
-    pub const ALL: [Tweak; 17] = [
+    pub const ALL: [Tweak; 20] = [
         Tweak::GameMode,
         Tweak::GameDvrOff,
         Tweak::NoBackgroundApps,
@@ -65,6 +70,9 @@ impl Tweak {
         Tweak::HighPerfPower,
         Tweak::UsbSuspendOff,
         Tweak::NoMouseAccel,
+        Tweak::GpuScheduling,
+        Tweak::DeliveryUploadOff,
+        Tweak::MemoryIntegrityOff,
         Tweak::PrivacyAdId,
         Tweak::PrivacyTailored,
         Tweak::PrivacyLanguageList,
@@ -77,6 +85,19 @@ impl Tweak {
     /// Shown on the Privacy page instead of Gaming.
     pub fn is_privacy(self) -> bool {
         self as usize >= Tweak::PrivacyAdId as usize
+    }
+
+    /// Where its registry values live; anything but the user's own settings needs administrator rights.
+    fn hive(self) -> Hive {
+        match self {
+            Tweak::GpuScheduling | Tweak::MemoryIntegrityOff => Hive::Machine,
+            Tweak::DeliveryUploadOff => Hive::NetworkService,
+            _ => Hive::User,
+        }
+    }
+
+    pub fn needs_admin(self) -> bool {
+        self.hive() != Hive::User
     }
 
     pub fn index(self) -> usize {
@@ -115,6 +136,7 @@ impl Tweak {
     pub fn takes_effect(self) -> Option<&'static str> {
         match self {
             Tweak::WindowedGames => Some("takes effect the next time each game starts"),
+            Tweak::GpuScheduling | Tweak::MemoryIntegrityOff => Some("takes effect after a restart"),
             _ => None,
         }
     }
@@ -131,6 +153,9 @@ impl Tweak {
             Tweak::NoMouseAccel => "mouse_accel",
             Tweak::WindowedGames => "windowed_games",
             Tweak::UsbSuspendOff => "usb_suspend",
+            Tweak::GpuScheduling => "gpu_scheduling",
+            Tweak::DeliveryUploadOff => "delivery_upload",
+            Tweak::MemoryIntegrityOff => "memory_integrity",
             Tweak::PrivacyAdId => "privacy_ad_id",
             Tweak::PrivacyTailored => "privacy_tailored",
             Tweak::PrivacyLanguageList => "privacy_language_list",
@@ -202,6 +227,24 @@ impl Tweak {
                 "Stops Windows from putting idle USB devices into low-power mode while plugged in, on the active power plan.",
                 "Prevents wake-up delays and dropouts on controllers, headsets and other USB devices.",
                 "Slightly higher idle power use. Applies to the current power plan only; a mouse you're using never sleeps anyway.",
+            ),
+            Tweak::GpuScheduling => (
+                "Hardware-accelerated GPU scheduling",
+                "Lets the graphics card manage its own work queue instead of Windows (Settings > System > Display > Graphics). Needed for frame generation (DLSS 3 and newer).",
+                "Slightly lower latency and steadier frames in many games; required for frame generation.",
+                "Needs a restart. Only works on graphics cards that support it (NVIDIA GTX 10-series, AMD RX 5000 and newer); older ones ignore it. Results vary by game.",
+            ),
+            Tweak::DeliveryUploadOff => (
+                "Stop sharing updates with other PCs",
+                "Windows can upload pieces of updates to other PCs on the internet (Settings > Windows Update > Advanced options > Delivery Optimization). This turns that off; updates still download normally.",
+                "Your upload bandwidth stays free for online games and voice chat.",
+                "None for most people. Updates may download a bit slower on a network with several Windows PCs.",
+            ),
+            Tweak::MemoryIntegrityOff => (
+                "Turn off memory integrity",
+                "Memory integrity (Windows Security > Device security > Core isolation) uses virtualization to block malicious drivers from changing Windows. It costs some CPU performance.",
+                "About 4 to 10 percent more FPS in games limited by the processor, according to independent tests.",
+                "Lowers protection against malicious drivers. Some anti-cheat systems and company PCs require it on. Needs a restart.",
             ),
             Tweak::PrivacyAdId => (
                 "Turn off the advertising ID",
@@ -285,6 +328,14 @@ impl Tweak {
                 (r"Software\Microsoft\Personalization\Settings", "AcceptedPrivacyPolicy", 0),
             ],
             Tweak::PrivacySpeech => &[(r"Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy", "HasAccepted", 0)],
+            Tweak::GpuScheduling => &[(r"SYSTEM\CurrentControlSet\Control\GraphicsDrivers", "HwSchMode", 2)],
+            // The value the Settings switch writes, in the Network Service account that runs Delivery Optimization.
+            Tweak::DeliveryUploadOff => {
+                &[(r"S-1-5-20\Software\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Settings", "DownloadMode", 0)]
+            }
+            Tweak::MemoryIntegrityOff => {
+                &[(r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity", "Enabled", 0)]
+            }
             _ => &[],
         }
     }
@@ -302,7 +353,7 @@ impl Tweak {
             _ => self
                 .registry()
                 .iter()
-                .map(|(k, v, _)| read_dword(k, v).map_or("-".to_string(), |d| d.to_string()))
+                .map(|(k, v, _)| read_dword_in(self.hive(), k, v).map_or("-".to_string(), |d| d.to_string()))
                 .collect::<Vec<_>>()
                 .join(","),
         })
@@ -367,7 +418,7 @@ impl Tweak {
                 run_hidden("powercfg", &["/setactive", "SCHEME_CURRENT"]).map(|_| ())
             }
             _ => {
-                write_registry(self.registry(), saved)?;
+                write_registry(self.hive(), self.registry(), saved)?;
                 if self == Tweak::NoTransparency {
                     broadcast_setting_change("ImmersiveColorSet");
                 }
@@ -386,7 +437,12 @@ impl Tweak {
             Tweak::NoMouseAccel => get_mouse().is_ok_and(|m| m[2] == 0),
             Tweak::WindowedGames => read_sz(DX_PREFS, DX_GLOBAL).is_some_and(|s| get_kv(&s, "SwapEffectUpgradeEnable") == Some("1")),
             Tweak::UsbSuspendOff => usb_suspend().is_ok_and(|v| v == 0),
-            _ => self.registry().iter().all(|(k, v, t)| read_dword(k, v) == Some(*t)),
+            // A Delivery Optimization policy wins over the Settings switch; peering off there counts too.
+            Tweak::DeliveryUploadOff => {
+                matches!(read_dword_in(Hive::Machine, DO_POLICY, "DODownloadMode"), Some(0 | 99 | 100))
+                    || self.registry().iter().all(|(k, v, t)| read_dword_in(self.hive(), k, v) == Some(*t))
+            }
+            _ => self.registry().iter().all(|(k, v, t)| read_dword_in(self.hive(), k, v) == Some(*t)),
         }
     }
 
@@ -406,7 +462,7 @@ impl Tweak {
         // Versions before 0.7 turned off all capture; put those values back too.
         if self == Tweak::GameDvrOff {
             if let Some(saved) = backup::get(LEGACY_DVR_KEY) {
-                write_registry(LEGACY_DVR, Some(&saved))?;
+                write_registry(Hive::User, LEGACY_DVR, Some(&saved))?;
                 backup::remove(LEGACY_DVR_KEY)?;
                 if !backup::has(self.key()) {
                     log("Optimizer: restored original Game DVR settings saved by an older version");
@@ -427,7 +483,7 @@ const LEGACY_DVR: &[(&str, &str, u32)] =
     &[(r"System\GameConfigStore", "GameDVR_Enabled", 0), (r"Software\Microsoft\Windows\CurrentVersion\GameDVR", "AppCaptureEnabled", 0)];
 
 /// Writes the targets (`None`) or a saved "a,b" snapshot, where "-" means the value didn't exist.
-fn write_registry(entries: &[(&str, &str, u32)], saved: Option<&str>) -> Result<(), String> {
+fn write_registry(hive: Hive, entries: &[(&str, &str, u32)], saved: Option<&str>) -> Result<(), String> {
     let saved: Vec<&str> = saved.map(|s| s.split(',').collect()).unwrap_or_default();
     for (i, (k, v, target)) in entries.iter().enumerate() {
         let value = match saved.get(i) {
@@ -435,9 +491,50 @@ fn write_registry(entries: &[(&str, &str, u32)], saved: Option<&str>) -> Result<
             None | Some(&"-") => None,
             Some(s) => Some(s.parse().map_err(|_| "Saved value is invalid.".to_string())?),
         };
-        write_dword(k, v, value)?;
+        write_dword_in(hive, k, v, value)?;
     }
     Ok(())
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Hive {
+    User,
+    Machine,
+    /// The Network Service account's settings (HKEY_USERS\S-1-5-20; keys include the SID).
+    NetworkService,
+}
+
+const DO_POLICY: &str = r"SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization";
+
+fn root(hive: Hive) -> RegKey {
+    use winreg::enums::{HKEY_LOCAL_MACHINE, HKEY_USERS};
+    RegKey::predef(match hive {
+        Hive::User => HKEY_CURRENT_USER,
+        Hive::Machine => HKEY_LOCAL_MACHINE,
+        Hive::NetworkService => HKEY_USERS,
+    })
+}
+
+fn read_dword_in(hive: Hive, key: &str, name: &str) -> Option<u32> {
+    root(hive).open_subkey(key).ok()?.get_value(name).ok()
+}
+
+fn write_dword_in(hive: Hive, key: &str, name: &str, value: Option<u32>) -> Result<(), String> {
+    let (k, _) = root(hive).create_subkey(key).map_err(|e| {
+        if hive != Hive::User && e.kind() == std::io::ErrorKind::PermissionDenied {
+            "Needs administrator rights (Settings > Restart as administrator).".to_string()
+        } else {
+            e.to_string()
+        }
+    })?;
+    match value {
+        Some(v) => k.set_value(name, &v),
+        None => match k.delete_value(name) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            r => r,
+        },
+    }
+    .map_err(|e| e.to_string())
 }
 
 fn parse_i32(s: &str) -> Result<i32, String> {
@@ -451,18 +548,6 @@ fn is_guid(s: &str) -> bool {
 
 fn read_dword(key: &str, name: &str) -> Option<u32> {
     RegKey::predef(HKEY_CURRENT_USER).open_subkey(key).ok()?.get_value(name).ok()
-}
-
-fn write_dword(key: &str, name: &str, value: Option<u32>) -> Result<(), String> {
-    let (k, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(key).map_err(|e| e.to_string())?;
-    match value {
-        Some(v) => k.set_value(name, &v),
-        None => match k.delete_value(name) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            r => r,
-        },
-    }
-    .map_err(|e| e.to_string())
 }
 
 pub(crate) fn read_sz(key: &str, name: &str) -> Option<String> {
@@ -602,6 +687,25 @@ fn set_mouse(mut m: [i32; 3]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registry_write_and_restore() {
+        // A throwaway per-user key exercises the same path the machine-wide tweaks use, without admin.
+        const KEY: &str = r"Software\KestrelTest\Tweak";
+        let entries: &[(&str, &str, u32)] = &[(KEY, "A", 1), (KEY, "B", 0)];
+        let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(r"Software\KestrelTest");
+        write_dword_in(Hive::User, KEY, "A", Some(7)).unwrap();
+        let snapshot: Vec<String> =
+            entries.iter().map(|(k, v, _)| read_dword_in(Hive::User, k, v).map_or("-".into(), |d| d.to_string())).collect();
+        assert_eq!(snapshot.join(","), "7,-");
+        write_registry(Hive::User, entries, None).unwrap();
+        assert_eq!((read_dword_in(Hive::User, KEY, "A"), read_dword_in(Hive::User, KEY, "B")), (Some(1), Some(0)));
+        write_registry(Hive::User, entries, Some(&snapshot.join(","))).unwrap();
+        assert_eq!((read_dword_in(Hive::User, KEY, "A"), read_dword_in(Hive::User, KEY, "B")), (Some(7), None));
+        let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(r"Software\KestrelTest");
+        assert!(Tweak::MemoryIntegrityOff.needs_admin() && !Tweak::GameMode.needs_admin());
+        assert!(!super::super::Preset::Performance.includes(Tweak::MemoryIntegrityOff) && !Tweak::MemoryIntegrityOff.is_privacy());
+    }
 
     #[test]
     fn power_mode_remembers_source() {

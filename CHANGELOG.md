@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.17.0: Set up this PC for gaming
+Optimize PC is now **Set up this PC for gaming** (Overview > Start): one scan finds everything on this PC that slows games down, shows it as one list in plain words, and applies it with one click. Everything can be undone.
+- **Windows settings:** the recommended ones as before, plus two new ones (as administrator): **hardware-accelerated GPU scheduling** (needed for frame generation; after a restart) and **stop sharing updates with other PCs** (frees your upload for online games; a Delivery Optimization policy already set on the PC counts as done).
+- **Apps that don't need to start with Windows:** common background apps such as Spotify, Discord, Teams and the Edge preloader are turned off at startup with the same reversible switch as the Startup apps page. Game launchers and OneDrive are listed unticked. Device software (mouse, headset, RGB) and security software are never listed.
+- **Game Mode for your games:** adds your detected games to Game Mode with the Performance profile and turns on automatic Game Mode, so background apps are quieted only while you play.
+- **Optional, unticked:** remove preinstalled extras (Clipchamp, News, Solitaire…; Xbox apps and the Store are kept). It frees space, not FPS, and says so.
+- **Optional, unticked, behind a warning: turn off memory integrity.** Independent tests measured about 4 to 10 percent more FPS in processor-limited games, but it lowers protection against malicious drivers and some anti-cheat systems require it. Never automatic or part of a preset; needs a restart; reversible.
+- After applying, Kestrel offers **Restart now** when a change needs it, and suggests measuring a game to see the difference.
+- **Measure:** "Kestrel can fix" now also covers GPU scheduling, apps that start with Windows, and Game Mode for the measured game. Memory integrity is shown as information with a button to Windows Security. **Undo these fixes** reverts exactly what was applied.
+- **Gaming > Windows settings** ends with "What Kestrel doesn't do, and why": debloating, turning off services or Defender, timer and boot tweaks, RAM cleaners, ping tweaks and deleting shader caches, each with the reason.
+
 ## 0.16.0: Proof
 - **Measure (new tab on Gaming):** start your game (Kestrel notices it, or press Play), get into gameplay and click Measure. After 60 seconds Kestrel says in plain words how smooth the game runs, from average FPS, 1% lows (the slowest moments) and stutter, and compares with the last time. It uses Intel PresentMon, the free, open-source frame-time tool reviewers use; Kestrel installs it through winget when you first measure, then starts measuring by itself.
 - **Fixes after measuring:** when the result is low or uneven, Kestrel lists what would help. The fixes it can make itself (Windows Game Mode, background recording, optimizations for windowed games, the Best performance power mode, the screen's full refresh rate, and the fast graphics card for this game on PCs with two) are applied together with "Apply fixes", each one reversible. The rest (an old graphics driver, slow memory settings, a game on a hard drive, overlays, too little free memory) are explained, with a button to the right place where there is one. Measure again to see the difference.

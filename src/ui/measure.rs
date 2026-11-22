@@ -100,7 +100,7 @@ impl App {
             );
         });
 
-        let mut apply = None;
+        let (mut apply, mut undo) = (None, None);
         if let Some(m) = &g.last {
             let (good, verdict) = advice::verdict(&m.stats);
             section(ui, &format!("Result: {}", m.name), |_| {});
@@ -115,9 +115,18 @@ impl App {
                     |_| {},
                 );
             });
-            if m.applied {
+            if !m.applied.is_empty() {
                 ui.add_space(S2);
-                info_bar(ui, Status::Ok, "Fixes applied. Play the same part of the game and measure again to see the difference.", |_| {});
+                info_bar(
+                    ui,
+                    Status::Ok,
+                    "Fixes applied. Play the same part of the game and measure again to see the difference. If it got worse, undo them.",
+                    |ui| {
+                        if row_button(ui, !busy, "Undo these fixes").clicked() {
+                            undo = Some(m.applied.clone());
+                        }
+                    },
+                );
             }
             if !good {
                 if !m.advice.auto.is_empty() {
@@ -185,6 +194,15 @@ impl App {
         }
         if measure_now {
             self.start_measure(&ctx, name, &exe);
+        }
+        if let Some(fixes) = undo {
+            self.confirm = Some(Confirm {
+                title: "Undo the fixes?".into(),
+                body: "Every setting Kestrel changed from this measurement goes back to how it was.".into(),
+                warning: None,
+                ok: "Undo",
+                action: Action::UndoFixes(fixes),
+            });
         }
         if let Some(fixes) = apply {
             let list: Vec<String> = fixes.iter().map(|(title, ..)| format!("• {title}")).collect();
