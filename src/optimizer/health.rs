@@ -192,7 +192,7 @@ fn overlays() -> Check {
 }
 
 /// (drive letter, solid-state, free bytes, total bytes) for each fixed drive.
-fn drives() -> Vec<(char, Option<bool>, u64, u64)> {
+pub(crate) fn drives() -> Vec<(char, Option<bool>, u64, u64)> {
     let mask = unsafe { GetLogicalDrives() };
     (0..26u8)
         .filter(|i| mask & (1 << i) != 0)

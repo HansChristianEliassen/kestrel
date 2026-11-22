@@ -48,6 +48,8 @@ pub struct App {
     relaunch: Option<std::path::PathBuf>,
     #[cfg(debug_assertions)]
     shots: Option<devshots::Shots>,
+    /// Page to open on the first frame, after a "Restart as administrator" from that page.
+    start_page: Option<String>,
     /// The app icon as a texture, for the sidebar (made on first draw).
     pub(crate) brand: Option<egui::TextureHandle>,
 }
@@ -82,6 +84,7 @@ impl App {
             #[cfg(debug_assertions)]
             shots: devshots::Shots::from_env(),
             brand: None,
+            start_page: std::env::args().find_map(|a| a.strip_prefix(crate::system::PAGE_ARG).map(String::from)),
         };
         // This launch is the new version (or the update was never installed): the previous exe is no longer needed.
         update::clean_up();
@@ -90,6 +93,13 @@ impl App {
                 "Windows 11 required",
                 "Kestrel supports Windows 11 only. On this version of Windows some settings won't exist or won't do anything.",
             );
+        }
+        // Debug screenshot runs sit next to a real Kestrel: they must not touch its Game Mode session or go online.
+        #[cfg(debug_assertions)]
+        if app.shots.is_some() {
+            app.gamemode.config.auto = false;
+            app.updates.prefs.enabled = false;
+            return app;
         }
         // Game Mode was still on when Kestrel last stopped (crash, power cut): put everything back now.
         if gamemode::is_active() {
@@ -105,7 +115,8 @@ impl App {
         let actions = profile.actions(&gm.config);
         let close = gm.config.close.clone();
         let trigger = game.clone().unwrap_or_else(|| "turned on by hand".into());
-        gm.on = Some(GameModeOn { profile, game });
+        // Turned on automatically, the game is already running; `play` clears this until the game has started.
+        gm.on = Some(GameModeOn { profile, seen: game.is_some(), game });
         gm.job.start(ctx, move || {
             let lines = gamemode::activate(profile, &actions, &close, &trigger);
             (lines, gamemode::is_active())
@@ -133,10 +144,11 @@ impl App {
             }
             _ => {}
         }
-        if !gm.config.auto || gm.job.running() {
+        // A session tied to a game (automatic, or started with Play) is watched even when automatic mode is off.
+        let auto_session = gm.on.as_ref().is_some_and(|o| o.game.is_some());
+        if (!gm.config.auto && !auto_session) || gm.job.running() {
             return;
         }
-        let auto_session = gm.on.as_ref().is_some_and(|o| o.game.is_some());
         let due = auto_session && gm.last_check.elapsed() >= RECHECK;
         if !(gamemode::watch::take_change() || due) {
             if auto_session {
@@ -148,13 +160,79 @@ impl App {
         // Wakes the next check exactly one interval from now; a no-op frame if no game is running.
         ctx.request_repaint_after(RECHECK);
         let running = crate::system::running_processes();
+        if let Some(on) = gm.on.as_mut().filter(|o| o.game.is_some()) {
+            // Ends when its game closes, but only once the game was seen running (a launch takes a while).
+            if on.game.as_ref().is_some_and(|g| running.contains(g)) {
+                on.seen = true;
+            } else if on.seen {
+                self.game_mode_off(ctx);
+            }
+            return;
+        }
         let game = gm.config.running_game(&running).map(|g| (g.profile, g.file_name()));
         match (game, gm.on.is_some()) {
-            (Some((profile, name)), false) if !gm.suppressed => self.game_mode_on(ctx, profile, Some(name)),
-            (None, true) if auto_session => self.game_mode_off(ctx),
+            (Some((profile, name)), false) if gm.config.auto && !gm.suppressed => self.game_mode_on(ctx, profile, Some(name)),
             (None, _) => gm.suppressed = false,
             _ => {}
         }
+    }
+
+    /// Play: Game Mode with the game's profile (its Game Mode entry, or the manual profile), then the game itself,
+    /// started through Explorer so it never inherits Kestrel's administrator rights.
+    pub(crate) fn play(&mut self, ctx: &egui::Context, exe: &str) {
+        let file = std::path::Path::new(exe).file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if let Err(e) = crate::system::shell_execute("explorer.exe", &format!("\"{exe}\""), false, None) {
+            return self.show_error("Couldn't start the game", e);
+        }
+        log(&format!("Play: started {exe}"));
+        if self.gamemode.on.is_some() {
+            return; // already on; leave the running session alone
+        }
+        let gm = &self.gamemode;
+        let profile = gm.config.games.iter().find(|g| g.file_name() == file).map_or(gm.config.manual_profile, |g| g.profile);
+        self.game_mode_on(ctx, profile, Some(file));
+        if let Some(on) = &mut self.gamemode.on {
+            on.seen = false;
+        }
+        self.gamemode.last_check = std::time::Instant::now();
+    }
+
+    /// Measures a running game for `measure::SECONDS` in the background.
+    pub(crate) fn start_measure(&mut self, ctx: &egui::Context, name: String, exe: &str) {
+        use crate::optimizer::measure;
+        let file = std::path::Path::new(exe).file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if measure::presentmon().is_none() {
+            let (pm_name, pm_id) = measure::PRESENTMON;
+            let tool =
+                upgrade::apps::AppUpdate { name: pm_name.into(), id: pm_id.into(), current: String::new(), available: String::new() };
+            self.confirm = Some(Confirm {
+                title: "Install PresentMon to measure games?".into(),
+                body: format!(
+                    "Kestrel measures frame rates with PresentMon, Intel's free, open-source (MIT) frame-time tool used by reviewers. It's a single small program installed through winget ({pm_id}), which checks it against the catalog's hash.\n\nMeasuring starts by itself once it's installed."
+                ),
+                warning: None,
+                ok: "Install",
+                action: Action::InstallApps(vec![tool]),
+            });
+            self.gaming.pending_measure = Some((name, exe.to_string()));
+            return;
+        }
+        if !self.admin {
+            return self.show_error(
+                "Measure",
+                "Measuring needs administrator rights, because Windows protects the event tracing PresentMon uses (Settings > Restart as administrator).",
+            );
+        }
+        if !crate::system::running_processes().contains(&file) {
+            return self.show_error("Measure", format!("Start {name} first and get into gameplay, then click Measure."));
+        }
+        self.gaming.measuring = Some((name.clone(), std::time::Instant::now()));
+        let (path, build) = (exe.to_string(), self.build);
+        self.gaming.measure.start(ctx, move || {
+            // The advice is gathered right away, while the game is still open, so it matches what was measured.
+            let result = measure::capture(&file).map(|s| (s, crate::optimizer::advice::advise(&path, build)));
+            (name, file, result)
+        });
     }
 
     /// Adds or removes the tray icon to match the setting, handles its clicks, and turns closing the window
@@ -497,6 +575,33 @@ impl App {
             // Reverse order: per-plan power settings are restored before the power plan itself switches back.
             Action::RestoreAll => self.start_restore(ctx, Tweak::ALL.into_iter().rev().collect(), true),
             Action::InstallUpdate => self.install_update(ctx),
+            Action::ApplyFixes(fixes) => {
+                use crate::optimizer::advice::Fix;
+                let mut tweaks = Vec::new();
+                let mut gpu = Vec::new();
+                for fix in fixes {
+                    match fix {
+                        Fix::Tweak(t) => tweaks.push(t),
+                        Fix::GameGpu(exe) => gpu.push(exe),
+                        Fix::Refresh(list) => self.try_refresh_fix(list),
+                    }
+                }
+                // Fixes are applied once; the next measurement shows what they did.
+                if let Some(m) = &mut self.gaming.last {
+                    m.advice.auto.clear();
+                    m.applied = true;
+                }
+                self.gaming.apply.start(ctx, move || {
+                    let mut lines = apply_tweaks(&tweaks);
+                    for exe in gpu {
+                        lines.push(match crate::optimizer::gaming::GameSetting::HighPerfGpu.apply(&exe) {
+                            Ok(()) => "\u{2714} The game now uses the fast graphics card (next time it starts)".into(),
+                            Err(e) => format!("\u{2716} Fast graphics card: {e}"),
+                        });
+                    }
+                    lines
+                });
+            }
             Action::UpdateApps(apps) => self.start_app_queue(ctx, apps, false),
             Action::InstallApps(apps) => self.start_app_queue(ctx, apps, true),
             Action::InstallDrivers(drivers) => {
@@ -577,6 +682,9 @@ impl App {
         if let Some(items) = self.cleaner.scan.poll() {
             self.cleaner.items = items;
         }
+        if let Some(entries) = self.cleaner.usage_job.poll() {
+            self.cleaner.usage = entries;
+        }
         if let Some(files) = self.cleaner.large_job.poll() {
             self.cleaner.large = Some(files);
         }
@@ -642,6 +750,12 @@ impl App {
             if self.upgrades.new_installs {
                 self.show_notice("Get apps", lines.join("\n"));
                 self.load_apps(ctx); // the new apps appear under Installed apps
+                                     // PresentMon was installed for a measurement: start it now instead of asking for another click.
+                if let Some((name, exe)) = self.gaming.pending_measure.take() {
+                    if crate::optimizer::measure::presentmon().is_some() {
+                        self.start_measure(ctx, name, &exe);
+                    }
+                }
             } else {
                 self.show_notice("App updates", lines.join("\n"));
                 self.check_app_updates(ctx);
@@ -675,6 +789,20 @@ impl App {
             }
             self.upgrades.gpus = health::gpu_drivers();
             self.check_driver_updates(ctx);
+        }
+        if let Some((name, file, result)) = self.gaming.measure.poll() {
+            self.gaming.measuring = None;
+            match result {
+                Ok((stats, advice)) => {
+                    let before = crate::optimizer::measure::history(&file).last().map(|h| h.1);
+                    crate::optimizer::measure::save(&file, &stats);
+                    let text = crate::optimizer::measure::describe(&stats, before.as_ref());
+                    log(&format!("Measure {file}: {text}"));
+                    self.show_notice(&format!("{name}: measured"), format!("{text}. Details and fixes are on Gaming > Measure."));
+                    self.gaming.last = Some(Measured { name, stats, before, advice, applied: false });
+                }
+                Err(e) => self.show_error(&format!("{name}: not measured"), e),
+            }
         }
         if let Some(entries) = self.startup.load.poll() {
             self.startup.entries = entries;
@@ -785,6 +913,17 @@ impl eframe::App for App {
         #[cfg(debug_assertions)]
         self.shots_tick(ctx);
         self.tray_tick(ctx);
+        if let Some(page) = self.start_page.take() {
+            match page.as_str() {
+                "measure" => {
+                    self.gaming.tab = GamingTab::Measure;
+                    self.go(Page::Gaming, ctx);
+                }
+                "updates" => self.go(Page::Upgrades, ctx),
+                "settings" => self.go(Page::Settings, ctx),
+                _ => {}
+            }
+        }
         self.poll(ctx);
         self.game_mode_tick(ctx);
         // After the window is up (never delays startup), then whenever the daily check falls due while Kestrel keeps

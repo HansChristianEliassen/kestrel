@@ -506,7 +506,7 @@ impl App {
             self.check_driver_updates(ui.ctx());
         }
         if restart {
-            if let Err(e) = relaunch_as_admin() {
+            if let Err(e) = relaunch_as_admin("updates") {
                 self.show_error("Restart as administrator", e);
             }
         }

@@ -2,6 +2,7 @@
 
 pub mod components;
 mod gamemode;
+mod measure;
 mod privacy;
 mod updates;
 mod upgrades;
@@ -288,7 +289,15 @@ impl App {
 
     pub(crate) fn cleaner_page(&mut self, ui: &mut Ui) {
         page_header(ui, "Cleanup", "Scanning only looks. Files are deleted after you choose categories and confirm.");
-        pivot(ui, &mut self.cleaner.tab, &[(CleanupTab::Junk, "Junk files"), (CleanupTab::Large, "Large files")]);
+        pivot(
+            ui,
+            &mut self.cleaner.tab,
+            &[(CleanupTab::Junk, "Junk files"), (CleanupTab::Large, "Large files"), (CleanupTab::Usage, "Disk usage")],
+        );
+        if self.cleaner.tab == CleanupTab::Usage {
+            self.disk_usage_tab(ui);
+            return;
+        }
         if self.cleaner.tab == CleanupTab::Large {
             self.large_files_tab(ui);
             return;
@@ -398,6 +407,111 @@ impl App {
         if scan {
             self.start_scan(ui.ctx());
         }
+    }
+
+    /// What's using space: the folders and files directly inside a folder, largest first, with drill-down.
+    fn disk_usage_tab(&mut self, ui: &mut Ui) {
+        let c = &mut self.cleaner;
+        let busy = c.usage_job.running();
+        let mut open: Option<std::path::PathBuf> = None;
+        ui.horizontal(|ui| {
+            for (letter, _, free, total) in crate::optimizer::health::drives() {
+                let label = format!("{letter}:  {} free of {}", fmt_bytes(free), fmt_bytes(total));
+                if button(ui, !busy, &label).clicked() {
+                    open = Some(std::path::PathBuf::from(format!(r"{letter}:\")));
+                }
+            }
+        });
+        ui.add_space(S3);
+        match &c.usage_dir {
+            None => {
+                group(ui, |ui| {
+                    empty_state(
+                        ui,
+                        "Choose a drive",
+                        "Kestrel adds up every folder on it and lists the largest. Only looks; nothing is changed.",
+                    );
+                });
+                if let Some(p) = open {
+                    self.start_usage(ui.ctx(), p);
+                }
+                return;
+            }
+            Some(dir) => {
+                ui.horizontal(|ui| {
+                    if let Some(parent) = dir.parent() {
+                        if button(ui, !busy, "Up").clicked() {
+                            open = Some(parent.to_path_buf());
+                        }
+                    }
+                    ui.label(RichText::new(dir.to_string_lossy()).color(TEXT));
+                });
+            }
+        }
+        ui.add_space(S2);
+        let total: u64 = c.usage.iter().map(|e| e.1).sum();
+        let largest = c.usage.first().map_or(1, |e| e.1.max(1));
+        const SHOWN: usize = 100;
+        group(ui, |ui| {
+            if busy {
+                row(ui, 0, |ui| progress(ui, "Adding up every folder inside. Large drives take a minute…"));
+            } else if c.usage.is_empty() {
+                empty_state(ui, "Nothing here", "This folder is empty, or Windows didn't let Kestrel read it.");
+            }
+            for (i, (path, bytes, is_dir)) in c.usage.iter().take(SHOWN).enumerate() {
+                row(ui, i, |ui| {
+                    ui.horizontal(|ui| {
+                        let name = path.file_name().map_or_else(|| path.to_string_lossy(), |n| n.to_string_lossy());
+                        let text = RichText::new(name).color(TEXT);
+                        cell(ui, (ui.available_width() - 360.0).max(120.0), false, |ui| {
+                            ui.add(Label::new(if *is_dir { text.strong() } else { text }).truncate()).on_hover_text(path.to_string_lossy());
+                        });
+                        // Share of the largest entry, so the biggest space users stand out.
+                        cell(ui, 120.0, false, |ui| {
+                            let (r, _) = ui.allocate_exact_size(vec2(110.0, 6.0), Sense::hover());
+                            ui.painter().rect_filled(r, CornerRadius::same(3), CONTROL);
+                            let w = r.width() * (*bytes as f32 / largest as f32);
+                            ui.painter().rect_filled(egui::Rect::from_min_size(r.min, vec2(w, r.height())), CornerRadius::same(3), ACCENT);
+                        });
+                        cell(ui, 80.0, true, |ui| caption(ui, fmt_bytes(*bytes)));
+                        cell(ui, 140.0, true, |ui| {
+                            if row_button(ui, true, "Show").on_hover_text("Show in File Explorer").clicked() {
+                                show_in_folder(path);
+                            }
+                            if *is_dir && row_button(ui, !busy, "Open").clicked() {
+                                open = Some(path.clone());
+                            }
+                        });
+                    });
+                });
+            }
+        });
+        ui.add_space(S2);
+        if busy {
+            return;
+        }
+        let more = c.usage.len().saturating_sub(SHOWN);
+        caption(
+            ui,
+            format!(
+                "{} in this folder{}. Folders Windows doesn't let Kestrel read count as empty; running as administrator sees more. Links are never followed, so nothing is counted twice.",
+                fmt_bytes(total),
+                if more > 0 { format!(", plus {more} smaller items not listed") } else { String::new() }
+            ),
+        );
+        if let Some(p) = open {
+            self.start_usage(ui.ctx(), p);
+        }
+    }
+
+    pub(crate) fn start_usage(&mut self, ctx: &egui::Context, dir: std::path::PathBuf) {
+        let c = &mut self.cleaner;
+        if c.usage_job.running() {
+            return;
+        }
+        c.usage_dir = Some(dir.clone());
+        c.usage.clear();
+        c.usage_job.start(ctx, move || crate::cleaner::usage::list(&dir));
     }
 
     fn large_files_tab(&mut self, ui: &mut Ui) {
@@ -763,10 +877,15 @@ impl App {
             "Gaming",
             "Settings here stay on until you revert them; Kestrel saves each original value first. For changes that only last while you play, use Game Mode.",
         );
-        pivot(ui, &mut self.gaming.tab, &[(GamingTab::Settings, "Windows settings"), (GamingTab::Games, "Per-game")]);
+        pivot(
+            ui,
+            &mut self.gaming.tab,
+            &[(GamingTab::Settings, "Windows settings"), (GamingTab::Games, "Per-game"), (GamingTab::Measure, "Measure")],
+        );
         match self.gaming.tab {
             GamingTab::Settings => self.gaming_settings_tab(ui),
             GamingTab::Games => self.games_tab(ui),
+            GamingTab::Measure => self.measure_tab(ui),
         }
     }
 
@@ -907,6 +1026,7 @@ impl App {
         let q = self.gaming.game_search.to_lowercase();
         let searching = self.gaming.games_job.running();
         let mut error = None;
+        let mut play = None;
         group(ui, |ui| {
             let mut shown = self.gaming.games.iter_mut().filter(|g| q.is_empty() || g.name.to_lowercase().contains(&q)).peekable();
             if shown.peek().is_none() {
@@ -924,6 +1044,13 @@ impl App {
                         ui.label(RichText::new(&game.name).color(TEXT));
                         caption(ui, game.source);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if row_button(ui, true, "Play")
+                                .on_hover_text("Turns on Game Mode with this game's profile, then starts the game.")
+                                .clicked()
+                            {
+                                play = Some(game.exe().to_string());
+                            }
+                            ui.add_space(S2);
                             let file = |p: &str| Path::new(p).file_name().map_or(p.to_string(), |f| f.to_string_lossy().into_owned());
                             if game.exes.len() > 1 {
                                 let before = game.chosen;
@@ -973,6 +1100,9 @@ impl App {
         if let Some(e) = error {
             self.show_error("Couldn't change the game setting", e);
         }
+        if let Some(exe) = play {
+            self.play(ui.ctx(), &exe);
+        }
     }
 
     pub(crate) fn settings_page(&mut self, ui: &mut Ui) {
@@ -995,7 +1125,7 @@ impl App {
             });
         });
         if relaunch {
-            if let Err(e) = relaunch_as_admin() {
+            if let Err(e) = relaunch_as_admin("settings") {
                 self.show_notice("Couldn't restart as administrator", e);
             }
         }

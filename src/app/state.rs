@@ -109,6 +109,8 @@ pub enum Action {
     UpdateApps(Vec<AppUpdate>),
     /// Fresh installs from Apps > Get apps.
     InstallApps(Vec<AppUpdate>),
+    /// The automatic fixes suggested after measuring a game.
+    ApplyFixes(Vec<crate::optimizer::advice::Fix>),
     /// Restore point first, then download and install these drivers from Windows Update.
     InstallDrivers(Vec<DriverUpdate>),
 }
@@ -126,6 +128,7 @@ pub enum CleanupTab {
     #[default]
     Junk,
     Large,
+    Usage,
 }
 
 #[derive(Default)]
@@ -137,6 +140,10 @@ pub struct CleanerState {
     /// None until the large-files search has run once.
     pub large: Option<Vec<(std::path::PathBuf, u64)>>,
     pub large_job: Job<Vec<(std::path::PathBuf, u64)>>,
+    /// Disk usage: the folder being shown and its entries, largest first.
+    pub usage_dir: Option<std::path::PathBuf>,
+    pub usage: Vec<crate::cleaner::usage::Entry>,
+    pub usage_job: Job<Vec<crate::cleaner::usage::Entry>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Default)]
@@ -205,6 +212,20 @@ pub type RefreshChange = (String, u32, u32);
 pub enum GamingTab {
     Settings,
     Games,
+    Measure,
+}
+
+/// (game name, exe file name, the measurement with its advice).
+pub type MeasureResult = (String, String, Result<(crate::optimizer::measure::Stats, crate::optimizer::advice::Advice), String>);
+
+pub struct Measured {
+    pub name: String,
+    pub stats: crate::optimizer::measure::Stats,
+    /// The measurement before this one, for the comparison.
+    pub before: Option<crate::optimizer::measure::Stats>,
+    pub advice: crate::optimizer::advice::Advice,
+    /// "Apply fixes" was used; the next measurement shows the difference.
+    pub applied: bool,
 }
 
 pub struct GamingState {
@@ -221,6 +242,19 @@ pub struct GamingState {
     pub game_search: String,
     /// Refresh rates just raised and not yet confirmed: (when, changes).
     pub refresh_trial: Option<(std::time::Instant, Vec<RefreshChange>)>,
+    /// A running measurement: (game name, exe file name, result).
+    /// A running measurement: (game name, exe file name, result with advice).
+    pub measure: Job<MeasureResult>,
+    /// Game being measured and when it started (for the countdown).
+    pub measuring: Option<(String, std::time::Instant)>,
+    /// The latest measurement this session, shown on the Measure tab.
+    pub last: Option<Measured>,
+    /// Game picked on the Measure tab (index into `games`), and the detected running game.
+    pub pick: usize,
+    pub running: Option<usize>,
+    pub running_checked: Option<std::time::Instant>,
+    /// Measure was clicked before PresentMon was installed: (game name, exe), started once the install finishes.
+    pub pending_measure: Option<(String, String)>,
 }
 
 impl Default for GamingState {
@@ -238,6 +272,13 @@ impl Default for GamingState {
             games_job: Job::default(),
             game_search: String::new(),
             refresh_trial: None,
+            measure: Job::default(),
+            measuring: None,
+            last: None,
+            pick: 0,
+            running: None,
+            running_checked: None,
+            pending_measure: None,
         }
     }
 }
@@ -262,6 +303,8 @@ pub struct GameModeOn {
     pub profile: gamemode::Profile,
     /// File name of the game that turned it on automatically; None when turned on by hand.
     pub game: Option<String>,
+    /// That game has been seen running (a session started with Play waits for the game to start).
+    pub seen: bool,
 }
 
 pub struct GameModeState {

@@ -127,7 +127,7 @@ fn run(app: &AppUpdate, verb: &str, done: String) -> Result<String, String> {
     if !valid_id(&app.id) {
         return Err(format!("{}: unexpected package id, skipped.", app.name));
     }
-    let args = [
+    let mut args = vec![
         verb,
         "--id",
         &app.id,
@@ -141,6 +141,10 @@ fn run(app: &AppUpdate, verb: &str, done: String) -> Result<String, String> {
         "--output-locale",
         "en-US",
     ];
+    // winget refuses per-user installs from an administrator session, so install for all users there.
+    if verb == "install" && crate::system::is_admin() {
+        args.extend(["--scope", "machine"]);
+    }
     let (code, text) = winget(&args)?;
     if code == 0 {
         Ok(format!("✔ {}: {done}", app.name))
@@ -154,6 +158,11 @@ fn explain(text: &str) -> Option<String> {
     if text.contains("cannot be run from an administrator context") {
         return Some(
             "its installer refuses to run as administrator. Open Kestrel normally (not as administrator) and update it again.".into(),
+        );
+    }
+    if text.contains("within the user scope") || text.contains("No applicable installer found") {
+        return Some(
+            "it can only be installed for your account, which isn't possible while Kestrel runs as administrator. Open Kestrel normally and install it again.".into(),
         );
     }
     if text.contains("existing package already installed") {
@@ -285,6 +294,8 @@ mod tests {
         let out = "  ██████████▒▒▒▒  1.2 MB / 3 MB\r\nInstaller failed with exit code: 1603\r\n";
         assert_eq!(last_line(out).as_deref(), Some("Installer failed with exit code: 1603"));
         assert_eq!(explain(out).as_deref(), Some("Installer failed with exit code: 1603"));
+        let scope = "The requested operation is not permitted from an administrator context on packages installed within the user scope.";
+        assert!(explain(scope).unwrap().contains("Open Kestrel normally"));
         assert!(explain("Found Spotify\r\nThe installer cannot be run from an administrator context.\r\n")
             .unwrap()
             .contains("not as administrator"));

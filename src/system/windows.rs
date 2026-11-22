@@ -149,11 +149,15 @@ pub fn show_in_folder(path: &std::path::Path) {
 }
 
 /// Starts a new elevated instance and exits this one.
-pub fn relaunch_as_admin() -> Result<(), String> {
+/// `page` (a fixed name like "measure") is where the new window opens, so the user lands back where they were.
+pub fn relaunch_as_admin(page: &str) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    shell_execute(&exe.to_string_lossy(), RELAUNCHED, true, None)?;
+    shell_execute(&exe.to_string_lossy(), &format!("{RELAUNCHED} {PAGE_ARG}{page}"), true, None)?;
     std::process::exit(0);
 }
+
+/// Prefix of the argument naming the page an elevated relaunch opens on.
+pub const PAGE_ARG: &str = "--page=";
 
 /// Argument an elevated relaunch passes, so it waits for the old window to close instead of exiting.
 pub const RELAUNCHED: &str = "--relaunched";

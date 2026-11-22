@@ -21,6 +21,10 @@ const MAX_BYTES: u64 = 1024 * 1024;
 const KEEP_LINES: usize = 2000;
 
 pub fn log(msg: &str) {
+    // Tests exercise real code paths (updates, cleanup) on temporary files; keep them out of the user's history.
+    if cfg!(test) {
+        return;
+    }
     let path = history_path();
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
         let _ = writeln!(f, "[{}] {}", local_time(), msg);

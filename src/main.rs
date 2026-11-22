@@ -78,7 +78,8 @@ mod icon_tests {
         }
     }
 
-    /// Writes the icon at each size to KESTREL_ICON_DIR for review.
+    /// Writes the icon at each size to KESTREL_ICON_DIR for review (debug builds, which have the PNG encoder).
+    #[cfg(debug_assertions)]
     #[test]
     #[ignore]
     fn dump() {

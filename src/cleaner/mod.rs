@@ -1,6 +1,7 @@
 pub mod cleanup;
 pub mod large;
 pub mod scanner;
+pub mod usage;
 
 pub use scanner::{Category, Kind, Scanned};
 
