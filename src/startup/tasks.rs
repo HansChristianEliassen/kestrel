@@ -112,6 +112,15 @@ pub fn enabled_task_count() -> usize {
     service().and_then(|s| unsafe { s.GetFolder(&BSTR::from("\\")) }.map_err(|e| e.message())).map_or(0, |root| count(&root))
 }
 
+/// Puts a task back to a saved state. Nothing to do when it's already there or the task no longer exists, so a
+/// saved original that was never actually changed doesn't fail every restore.
+pub fn put_back(path: &str, on: bool) -> Result<(), String> {
+    match is_enabled(path) {
+        Ok(now) if now != on => set_enabled(path, on),
+        _ => Ok(()),
+    }
+}
+
 pub fn is_enabled(path: &str) -> Result<bool, String> {
     unsafe {
         let task = service()?.GetFolder(&BSTR::from("\\")).and_then(|f| f.GetTask(&BSTR::from(path))).map_err(|e| e.message())?;
@@ -123,7 +132,9 @@ pub fn set_enabled(path: &str, enabled: bool) -> Result<(), String> {
     unsafe {
         let task = service()?.GetFolder(&BSTR::from("\\")).and_then(|f| f.GetTask(&BSTR::from(path))).map_err(|e| e.message())?;
         task.SetEnabled(if enabled { VARIANT_TRUE } else { VARIANT_FALSE }).map_err(|e| {
-            if e.code().0 as u32 == 0x8007_0005 {
+            if e.code().0 as u32 == 0x8007_0005 && crate::system::is_admin() {
+                "Windows protects this task: only Windows itself can change it, even as administrator.".into()
+            } else if e.code().0 as u32 == 0x8007_0005 {
                 "This task belongs to all users; changing it needs administrator rights (Settings > Restart as administrator).".into()
             } else {
                 e.message()

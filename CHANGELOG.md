@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.23.1: Protected tasks
+- **Extreme no longer offers the Windows AI scheduled tasks** (Recall, Click to Do). Windows lets only itself change them, even for administrators (xOS gets around this by running as TrustedInstaller). Removing Recall still turns Recall off.
+- **Clearer error:** a task Windows protects now says so, instead of asking you to restart as administrator when you already are.
+- **No leftover backups after a failed change:** when a scheduled task can't be changed, the original Kestrel saved a moment before is removed again, and Restore everything and Undo profile skip tasks that are already as they were, instead of failing on them every time.
+
 ## 0.23.0: Profiles and System analysis
 Built from a teardown of KernelOS, xOS, AtlasOS and ReviOS: optimization profiles up to an Extreme level close to custom gaming builds, and a System analysis that shows what Windows is running, what changed, and what other optimizers already did.
 - **Profiles (Windows > Performance > Profile):** Balanced, Competitive and Extreme, each building on the one before, across Windows settings, services and scheduled tasks. Kestrel checks this PC first: what's already on is shown as On and skipped, settings that cost battery life are left out on PCs with a battery, and memory integrity stays on when FACEIT or Riot Vanguard is installed. Apply shows the full list first; **Undo profile** (or Settings > Restore everything) puts it all back.

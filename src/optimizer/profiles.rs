@@ -96,8 +96,9 @@ pub fn hardware() -> Hardware {
 }
 
 /// Telemetry and diagnostic tasks, by the lowest profile that turns them off. Balanced is AtlasOS's own list;
-/// Competitive adds telemetry and diagnostics from xOS's list; Extreme adds Windows AI (Recall, Click to Do) tasks.
-/// Update, backup, disk-integrity and memory-diagnostic tasks are left alone on purpose.
+/// Competitive adds telemetry and diagnostics from xOS's list. Update, backup, disk-integrity and memory-diagnostic
+/// tasks are left alone on purpose. Windows AI tasks (Recall, Click to Do) aren't listed: Windows lets only itself
+/// change them, even for administrators (xOS runs as TrustedInstaller to get around that); removing Recall covers it.
 const TASKS: &[(Profile, &str)] = &[
     (Profile::Balanced, r"\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector"),
     (Profile::Balanced, r"\Microsoft\Windows\Customer Experience Improvement Program\Consolidator"),
@@ -120,11 +121,6 @@ const TASKS: &[(Profile, &str)] = &[
     (Profile::Competitive, r"\Microsoft\Windows\Sustainability\SustainabilityTelemetry"),
     (Profile::Competitive, r"\Microsoft\Windows\Diagnosis\RecommendedTroubleshootingScanner"),
     (Profile::Competitive, r"\Microsoft\Windows\Windows Error Reporting\QueueReporting"),
-    (Profile::Extreme, r"\Microsoft\Windows\WindowsAI\Recall\PolicyConfiguration"),
-    (Profile::Extreme, r"\Microsoft\Windows\WindowsAI\Settings\InitialConfiguration"),
-    (Profile::Extreme, r"\Microsoft\Windows\WindowsAI\ClickToDo\ModelCachingIdle"),
-    (Profile::Extreme, r"\Microsoft\Windows\WindowsAI\ClickToDo\ModelCachingLimit"),
-    (Profile::Extreme, r"\Microsoft\Windows\WindowsAI\ClickToDo\ModelCachingUpdate"),
 ];
 
 /// Store apps that keep background processes running: (package name prefix, name).
@@ -216,10 +212,7 @@ pub fn plan(p: Profile, build: u32, admin: bool) -> (Hardware, Vec<Item>) {
         if present.is_empty() {
             continue;
         }
-        let title = match level {
-            Profile::Extreme => "Windows AI scheduled tasks (Recall, Click to Do)",
-            _ => "Telemetry and diagnostics scheduled tasks",
-        };
+        let title = "Telemetry and diagnostics scheduled tasks";
         items.push(Item {
             title: format!("{title} ({})", present.len()),
             detail: "Microsoft's own tasks that collect usage and diagnostic data. Turned off, not deleted.".into(),
@@ -331,13 +324,20 @@ pub fn apply(items: &[Item]) -> Vec<String> {
             Kind::Tasks(paths) => {
                 let mut failed = Vec::new();
                 for path in paths {
+                    let saved_before = backup::has(&task_key(path));
                     let result = backup::save_original(&task_key(path), || {
                         crate::startup::task_enabled(path).map(|on| if on { "1" } else { "0" }.to_string())
                     })
                     .and_then(|()| crate::startup::set_task_enabled(path, false));
                     match result {
                         Ok(()) => record(&format!("task\t{path}")),
-                        Err(e) => failed.push(format!("{path}: {e}")),
+                        Err(e) => {
+                            // Nothing changed, so the original saved a moment ago must not linger for Restore everything.
+                            if !saved_before {
+                                let _ = backup::remove(&task_key(path));
+                            }
+                            failed.push(format!("{path}: {e}"));
+                        }
                     }
                 }
                 lines.push(if failed.is_empty() {
@@ -382,7 +382,7 @@ pub fn undo() -> Vec<String> {
             },
             Some(("service", name)) => services::revert(name).map(|()| format!("✔ Service {name} restored")),
             Some(("task", path)) => match backup::get(&task_key(path)) {
-                Some(original) => crate::startup::set_task_enabled(path, original == "1")
+                Some(original) => crate::startup::put_task_back(path, original == "1")
                     .and_then(|()| backup::remove(&task_key(path)))
                     .map(|()| format!("✔ Scheduled task restored: {path}")),
                 None => Ok(String::new()),

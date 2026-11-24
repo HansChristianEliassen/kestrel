@@ -168,7 +168,7 @@ pub fn restore_all() -> Vec<String> {
         }
     }
     for (path, original) in backup::with_prefix("task:") {
-        let result = tasks::set_enabled(&path, original == "1").and_then(|()| backup::remove(&format!("task:{path}")));
+        let result = tasks::put_back(&path, original == "1").and_then(|()| backup::remove(&format!("task:{path}")));
         lines.push(match result {
             Ok(()) => format!("✔ Restored scheduled task: {path}"),
             Err(e) => format!("✖ Scheduled task {path}: {e}"),
