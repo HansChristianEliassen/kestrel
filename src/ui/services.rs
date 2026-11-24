@@ -39,7 +39,12 @@ impl App {
         }
 
         let mut revert = None;
-        for (kind, title) in [(Group::Recommended, "Recommended"), (Group::Optional, "Optional"), (Group::Apps, "From your other apps")] {
+        for (kind, title) in [
+            (Group::Recommended, "Recommended"),
+            (Group::Optional, "Optional"),
+            (Group::Apps, "From your other apps"),
+            (Group::Extreme, "Extreme (costs a Windows feature)"),
+        ] {
             let rows: Vec<usize> = (0..st.list.len()).filter(|&i| st.list[i].group == kind).collect();
             if rows.is_empty() {
                 continue;

@@ -64,6 +64,8 @@ pub enum Group {
     Optional,
     /// Updaters and remote-access tools installed by other apps: set to Manual, never Disabled.
     Apps,
+    /// Extreme profile: costs a Windows feature people notice, so it needs an explicit tick.
+    Extreme,
 }
 
 #[derive(Clone, Copy)]
@@ -87,7 +89,7 @@ const fn def(names: &'static [&'static str], title: &'static str, lose: &'static
     Def { names, title, lose, group, to, when: When::Always }
 }
 
-use Group::{Apps, Optional, Recommended};
+use Group::{Apps, Extreme, Optional, Recommended};
 use Start::{Disabled, Manual};
 
 /// Microsoft lists these as "OK to disable" (or they are app updaters). Kept off on purpose for gaming PCs: Xbox
@@ -122,6 +124,35 @@ const DEFS: &[Def] = &[
     ),
     def(&["icssvc"], "Mobile Hotspot", "Sharing this PC's connection as a Wi-Fi hotspot.", Recommended, Disabled),
     def(&["WalletService", "SEMgrSvc"], "Payments and NFC", "Tap-to-pay, which desktop PCs don't have.", Recommended, Disabled),
+    def(
+        &["diagnosticshub.standardcollector.service"],
+        "Diagnostics Hub collector",
+        "Nothing; it collects data for developer diagnostic tools.",
+        Recommended,
+        Disabled,
+    ),
+    def(
+        &["PcaSvc"],
+        "Program Compatibility Assistant",
+        "Windows no longer offers compatibility fixes when an old program fails to install or run.",
+        Recommended,
+        Disabled,
+    ),
+    def(
+        &["DPS", "WdiServiceHost", "WdiSystemHost"],
+        "Diagnostics and troubleshooters",
+        "Windows troubleshooters and automatic problem detection, such as network problem detection.",
+        Optional,
+        Disabled,
+    ),
+    def(&["wercplsupport"], "Problem Reports control panel", "The Problem Reports page in Control Panel.", Optional, Disabled),
+    def(
+        &["InventorySvc"],
+        "Inventory and Compatibility Appraisal",
+        "Nothing day to day; Windows uses it to check whether apps are compatible with an upgrade.",
+        Optional,
+        Disabled,
+    ),
     Def {
         when: When::NotInsider,
         ..def(&["wisvc"], "Windows Insider Service", "Joining the Windows Insider Program.", Recommended, Disabled)
@@ -141,6 +172,13 @@ const DEFS: &[Def] = &[
         "SysMain (preloads apps)",
         "Apps may start a little slower, mainly from hard drives. Some players see fewer hitches: measure a game before and after.",
         Optional,
+        Disabled,
+    ),
+    def(
+        &["WSearch"],
+        "Windows Search indexing",
+        "Fast file search: Start and File Explorer still find apps and settings, but searching files and their contents gets slow.",
+        Extreme,
         Disabled,
     ),
     def(&["edgeupdate", "edgeupdatem"], "Microsoft Edge Update", "Nothing; Edge still updates on its own schedule.", Apps, Manual),
@@ -453,7 +491,6 @@ mod tests {
             "themes",
             "ssdpsrv",
             "upnphost",
-            "wsearch",
             "bfe",
             "mpssvc",
             "windefend",
@@ -468,6 +505,8 @@ mod tests {
         for d in DEFS {
             for n in d.names {
                 assert!(!DENY.iter().any(|x| matches_name(n, x)), "{n} must not be listed");
+                // Search indexing is offered only as an explicit Extreme choice.
+                assert!(!n.eq_ignore_ascii_case("WSearch") || d.group == Group::Extreme);
             }
             // Other apps' services are only ever set to start when needed, never disabled.
             assert!(d.group != Group::Apps || d.to == Start::Manual);

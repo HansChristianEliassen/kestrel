@@ -18,14 +18,6 @@ pub enum Preset {
 }
 
 impl Preset {
-    pub fn desc(self) -> &'static str {
-        match self {
-            Preset::Balanced => "Low-risk changes only. Windows keeps behaving normally.",
-            Preset::Performance => "Adds Windows 11's Best performance power mode for the power source you're on now.",
-            Preset::Custom => "Pick individual optimizations yourself.",
-        }
-    }
-
     /// Cosmetic, preference and weak-evidence settings stay out of presets; pick them under Custom.
     pub fn includes(self, t: Tweak) -> bool {
         match self {

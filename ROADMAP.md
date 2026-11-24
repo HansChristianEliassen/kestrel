@@ -10,6 +10,32 @@ Done so far:
 - 0.20 "Simpler layout": five sections (Home, Games, Windows, Clean up, Apps) plus Settings; one page per game; Services.
 - 0.21 "Know more": guides for Valorant, Apex Legends and Minecraft, hard drive warning, update counts on Home, Copy diagnostics, opt-in Start with Windows, memory in use on Startup apps.
 - 0.22 "Clean test": a temporary, reviewed clean boot to rule out other software, measured with Measure.
+- 0.23 "Profiles and System analysis": Balanced / Competitive / Extreme profiles across settings, services and tasks; System analysis with a baseline; detection of other optimizers; service grouping; more diagnostic services.
+
+## Custom-OS parity plan (from the KernelOS/xOS teardown, November 2026)
+Goal: reach what KernelOS, xOS and AtlasOS do on an official install, keeping only changes with a technical justification, each detected, reversible and honest about its cost.
+
+**Audit: Kestrel against the custom builds**
+| Area | Custom builds | Kestrel today | Verdict |
+|---|---|---|---|
+| Telemetry, location, maps, phone, retail demo, Insider, wallet, fax, link tracking, hotspot, printing | xOS, Atlas, Revi disable these | Services tab (safe list) | Done |
+| Diagnostic hosts: `diagnosticshub.standardcollector.service`, `PcaSvc`, `WdiServiceHost`, `WdiSystemHost`, `DPS`, `wercplsupport`, `InventorySvc` | xOS, Revi (Atlas: `PcaSvc`) | Missing | Add to Services (0.23) |
+| Service grouping (`SvcHostSplitThresholdInKB` above RAM / `SvcHostSplitDisable`) | Atlas, xOS | Missing | Add as an opt-in tweak, labeled as cosmetic: fewer processes, same work (0.23) |
+| Before/after measurement of processes, threads, handles, svchost, RAM, CPU, services, tasks, security | None publish this | Missing | Add System analysis (0.23) |
+| Detecting AtlasOS/xOS/ReviOS/KernelOS and manual changes | n/a | Missing | Add (0.23): Atlas `C:\Windows\AtlasDesktop`, xOS `HKLM\SOFTWARE\XOSToolkit`, plus state signals |
+| Game Mode, Game DVR, GPU scheduling, Delivery Optimization, power mode, USB suspend, NVIDIA shader cache, startup apps | All | Done | Keep |
+| Telemetry scheduled tasks | Atlas (5 tasks), xOS (`DisableScheduledTasks.ps1`) | Missing | 0.24, after reading xOS's script and checking each task exists on 24H2/25H2 |
+| Profiles Balanced / Competitive / Extreme | Atlas, xOS options | Presets for Windows settings only | 0.24: one profile choice spanning settings, services and tasks, hardware-aware |
+| Removing inbox apps, Copilot/Recall | KernelOS, xOS | Set up removes some preinstalled apps | 0.25 (Extreme): Store apps are reinstallable; Recall through its Windows feature |
+| Defender, Windows Update, mitigations, VBS off | KernelOS, xOS | VBS opt-in only | 0.25 (Extreme), behind explicit confirmation with the anti-cheat consequences; needs your decision first |
+| `Win32PrioritySeparation` 0x26 | Atlas, xOS | — | Skip: decodes to client Windows' default (short, variable, 3x boost) |
+| `NetworkThrottlingIndex` 10, `SvcHostSplitThresholdInKB` 3670016 | Revi, xOS | — | Skip: both equal the Windows default |
+| `SystemResponsiveness`, `DisablePagingExecutive`, `DisablePageCombining`, `QueuedPresentLimit` | xOS, Atlas | — | Skip: KernelOS reverted all four in v1.5.1 |
+| Global timer resolution, `useplatformclock`, HPET device off, forced MSI, TCP tweaks | Various | — | Skip: per-process since Windows 10 2004 (Microsoft), or no evidence, or risk |
+| Health check text "Kestrel never turns security features off" | — | Contradicts the memory integrity opt-in | Fix (0.23) |
+
+**Stages**
+All three stages shipped together in 0.23.0. Still open: inspecting KernelOS's unpublished timer and power-plan values in a VM, and per-game NVIDIA/AMD driver profiles.
 
 Next:
 - More games, each through documented sources or one calibration (Counter-Strike 2 and Cyberpunk 2077 need one calibration run each); RDR2 DLSS and Overwatch file values once verified.

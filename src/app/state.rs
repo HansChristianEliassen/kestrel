@@ -58,6 +58,7 @@ pub enum WindowsTab {
     Startup,
     Services,
     Privacy,
+    Analysis,
 }
 
 #[derive(Default)]
@@ -118,6 +119,8 @@ pub enum Action {
     UndoFixes(Vec<crate::optimizer::advice::Fix>),
     /// Restore point first, then download and install these drivers from Windows Update.
     InstallDrivers(Vec<DriverUpdate>),
+    /// Windows > Performance: the profile items to apply.
+    ApplyProfile(Vec<crate::optimizer::profiles::Item>),
     /// Windows > Services: the rows to apply.
     ApplyServices(Vec<crate::services::Candidate>),
 }
@@ -508,4 +511,29 @@ pub struct CleanTestState {
     pub started: Option<Vec<String>>,
     /// (services, startup apps) off while a test is on.
     pub active: Option<(usize, usize)>,
+}
+
+/// Windows > System analysis.
+#[derive(Default)]
+pub struct AnalysisState {
+    pub loaded: bool,
+    pub job: Job<(crate::optimizer::analysis::Snapshot, Vec<crate::optimizer::analysis::Finding>)>,
+    pub now: Option<crate::optimizer::analysis::Snapshot>,
+    pub findings: Vec<crate::optimizer::analysis::Finding>,
+    pub baseline: Option<crate::optimizer::analysis::Snapshot>,
+}
+
+/// Windows > Performance > Profile.
+#[derive(Default)]
+pub struct ProfileState {
+    pub profile: crate::optimizer::profiles::Profile,
+    /// The profile the current plan was made for.
+    pub loaded: Option<crate::optimizer::profiles::Profile>,
+    pub plan: Job<(crate::optimizer::profiles::Hardware, Vec<crate::optimizer::profiles::Item>)>,
+    pub hw: Option<crate::optimizer::profiles::Hardware>,
+    pub items: Vec<crate::optimizer::profiles::Item>,
+    /// Ticked item ids.
+    pub ticked: std::collections::HashSet<String>,
+    /// Applying or undoing: one line per item.
+    pub apply: Job<Vec<String>>,
 }

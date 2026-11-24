@@ -1,5 +1,6 @@
 //! Theme, navigation and the screens. Every screen is built from the components in `components`.
 
+mod analysis;
 mod cleantest;
 pub mod components;
 mod game_settings;
@@ -7,6 +8,7 @@ mod gamemode;
 mod games;
 mod measure;
 mod privacy;
+mod profiles;
 mod services;
 mod updates;
 mod upgrades;
@@ -14,7 +16,7 @@ mod upgrades;
 use eframe::egui::{self, vec2, Align, Align2, Color32, CornerRadius, FontId, Label, Layout, RichText, Sense, Stroke, TextStyle, Ui};
 
 use crate::app::state::{Action, AppsTab, CleanupTab, Confirm, GamingState, OptStage, Page, SortBy, WindowsTab};
-use crate::app::{preset_selection, App};
+use crate::app::App;
 use crate::cleaner::Kind;
 use crate::optimizer::games::Game;
 use crate::optimizer::{health, Preset, Tweak};
@@ -998,6 +1000,7 @@ impl App {
                 (WindowsTab::Startup, "Startup apps"),
                 (WindowsTab::Services, "Services"),
                 (WindowsTab::Privacy, "Privacy"),
+                (WindowsTab::Analysis, "System analysis"),
             ],
         );
         self.gaming.windows_tab = tab;
@@ -1006,28 +1009,16 @@ impl App {
             WindowsTab::Startup => self.startup_page(ui),
             WindowsTab::Services => self.services_tab(ui),
             WindowsTab::Privacy => self.privacy_page(ui),
+            WindowsTab::Analysis => self.analysis_tab(ui),
         }
     }
 
     fn gaming_settings_tab(&mut self, ui: &mut Ui) {
+        self.profile_panel(ui);
+        section(ui, "Individual settings", |_| {});
         let build = self.build;
         let admin = self.admin;
         let g = &mut self.gaming;
-        let mut preset = g.preset;
-        ui.horizontal(|ui| {
-            secondary(ui, "Preset");
-            if segmented(
-                ui,
-                &mut preset,
-                &[(Preset::Balanced, "Balanced"), (Preset::Performance, "Performance"), (Preset::Custom, "Custom")],
-            ) {
-                g.preset = preset;
-                if preset != Preset::Custom {
-                    g.selected = preset_selection(preset, build);
-                }
-            }
-            caption(ui, g.preset.desc());
-        });
         let chosen: Vec<Tweak> = Tweak::ALL.into_iter().filter(|t| !t.is_privacy() && g.selected[t.index()]).collect();
         let busy = g.apply.running();
         let (mut apply, mut restore, mut restore_point) = (false, false, false);
@@ -1071,6 +1062,7 @@ impl App {
                     .filter(|t| {
                         !t.is_privacy()
                             && *t != Tweak::MemoryIntegrityOff
+                            && *t != Tweak::UpdatesOff
                             && Preset::Balanced.includes(*t) == recommended
                             && (*t != Tweak::NoBackgroundApps || has_backup(t))
                     })

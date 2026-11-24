@@ -658,7 +658,7 @@ fn gpu_scheduling() -> Check {
 fn memory_integrity() -> Check {
     let on = hklm_dword(r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity", "Enabled") == Some(1);
     let detail = if on {
-        "On. It blocks malicious kernel drivers. Microsoft notes it can lower gaming performance slightly; that trade-off is yours to make in Windows Security. Kestrel never turns security features off."
+        "On. It blocks malicious kernel drivers. Microsoft notes it can lower gaming performance slightly; that trade-off is yours. Kestrel only turns it off if you choose to in Set up this PC for gaming, and FACEIT and Riot Vanguard can require it on."
     } else {
         "Off. Microsoft recommends turning it on for protection against malicious drivers, if your drivers are compatible."
     };

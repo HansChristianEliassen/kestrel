@@ -94,6 +94,24 @@ pub fn list() -> Vec<StartupTask> {
     out
 }
 
+/// Enabled scheduled tasks in every folder, Windows' own included (for System analysis).
+pub fn enabled_task_count() -> usize {
+    fn count(folder: &ITaskFolder) -> usize {
+        unsafe {
+            let tasks = folder.GetTasks(TASK_ENUM_HIDDEN.0).map_or(0, |ts| {
+                (1..=ts.Count().unwrap_or(0))
+                    .filter(|i| ts.get_Item(&VARIANT::from(*i)).and_then(|t| t.Enabled()).is_ok_and(|e| e.as_bool()))
+                    .count()
+            });
+            let subs = folder
+                .GetFolders(0)
+                .map_or(0, |fs| (1..=fs.Count().unwrap_or(0)).filter_map(|i| fs.get_Item(&VARIANT::from(i)).ok()).map(|f| count(&f)).sum());
+            tasks + subs
+        }
+    }
+    service().and_then(|s| unsafe { s.GetFolder(&BSTR::from("\\")) }.map_err(|e| e.message())).map_or(0, |root| count(&root))
+}
+
 pub fn is_enabled(path: &str) -> Result<bool, String> {
     unsafe {
         let task = service()?.GetFolder(&BSTR::from("\\")).and_then(|f| f.GetTask(&BSTR::from(path))).map_err(|e| e.message())?;

@@ -43,6 +43,10 @@ pub enum Tweak {
     MemoryIntegrityOff,
     /// NVIDIA driver setting (global), through the NvAPI driver-settings interface.
     NvShaderCache,
+    /// Fewer svchost processes, same work. Machine-wide.
+    ServiceGrouping,
+    /// Extreme profile only, behind explicit confirmation.
+    UpdatesOff,
     // Privacy (Privacy page only; never in a preset).
     PrivacyAdId,
     PrivacyTailored,
@@ -61,7 +65,7 @@ pub struct Info {
 }
 
 impl Tweak {
-    pub const ALL: [Tweak; 21] = [
+    pub const ALL: [Tweak; 23] = [
         Tweak::GameMode,
         Tweak::GameDvrOff,
         Tweak::NoBackgroundApps,
@@ -76,6 +80,8 @@ impl Tweak {
         Tweak::DeliveryUploadOff,
         Tweak::MemoryIntegrityOff,
         Tweak::NvShaderCache,
+        Tweak::ServiceGrouping,
+        Tweak::UpdatesOff,
         Tweak::PrivacyAdId,
         Tweak::PrivacyTailored,
         Tweak::PrivacyLanguageList,
@@ -93,7 +99,7 @@ impl Tweak {
     /// Where its registry values live; anything but the user's own settings needs administrator rights.
     fn hive(self) -> Hive {
         match self {
-            Tweak::GpuScheduling | Tweak::MemoryIntegrityOff => Hive::Machine,
+            Tweak::GpuScheduling | Tweak::MemoryIntegrityOff | Tweak::ServiceGrouping | Tweak::UpdatesOff => Hive::Machine,
             Tweak::DeliveryUploadOff => Hive::NetworkService,
             _ => Hive::User,
         }
@@ -140,7 +146,7 @@ impl Tweak {
     pub fn takes_effect(self) -> Option<&'static str> {
         match self {
             Tweak::WindowedGames => Some("takes effect the next time each game starts"),
-            Tweak::GpuScheduling | Tweak::MemoryIntegrityOff => Some("takes effect after a restart"),
+            Tweak::GpuScheduling | Tweak::MemoryIntegrityOff | Tweak::ServiceGrouping => Some("takes effect after a restart"),
             Tweak::NvShaderCache => Some("takes effect the next time each game starts"),
             _ => None,
         }
@@ -162,6 +168,8 @@ impl Tweak {
             Tweak::DeliveryUploadOff => "delivery_upload",
             Tweak::MemoryIntegrityOff => "memory_integrity",
             Tweak::NvShaderCache => "nvidia_shader_cache",
+            Tweak::ServiceGrouping => "service_grouping",
+            Tweak::UpdatesOff => "updates_off",
             Tweak::PrivacyAdId => "privacy_ad_id",
             Tweak::PrivacyTailored => "privacy_tailored",
             Tweak::PrivacyLanguageList => "privacy_language_list",
@@ -258,6 +266,18 @@ impl Tweak {
                 "Fewer hitches when games load new areas or effects, especially in large games.",
                 "Uses up to 10 GB of disk space over time.",
             ),
+            Tweak::ServiceGrouping => (
+                "Group Windows services into fewer processes",
+                "Since 2017 Windows runs most services in their own svchost process on PCs with over 3.5 GB of memory. This raises that limit above this PC's memory, so services share processes again, as on older Windows and in AtlasOS and xOS.",
+                "Far fewer processes and a little less memory. The same services still run, so games don't get faster: it changes the count, not the work.",
+                "If one service in a shared process crashes, the others in it stop too; separating them is why Microsoft changed this. Needs a restart.",
+            ),
+            Tweak::UpdatesOff => (
+                "Turn off automatic Windows updates",
+                "Sets Microsoft's \"Configure Automatic Updates\" policy to off, so Windows stops downloading and installing updates by itself. You can still update by hand in Settings > Windows Update.",
+                "No update downloads, installs or restarts in the background.",
+                "Security fixes no longer install by themselves, which leaves the PC exposed until you update. FACEIT and ESEA require current updates. Pause updates (Apps > Updates) is the safer choice for a tournament.",
+            ),
             Tweak::PrivacyAdId => (
                 "Turn off the advertising ID",
                 "Apps can no longer use your advertising ID to tie what you do across apps to personalized ads (Settings > Privacy & security > General).",
@@ -341,6 +361,7 @@ impl Tweak {
             ],
             Tweak::PrivacySpeech => &[(r"Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy", "HasAccepted", 0)],
             Tweak::GpuScheduling => &[(r"SYSTEM\CurrentControlSet\Control\GraphicsDrivers", "HwSchMode", 2)],
+            Tweak::UpdatesOff => &[(r"SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU", "NoAutoUpdate", 1)],
             // The value the Settings switch writes, in the Network Service account that runs Delivery Optimization.
             Tweak::DeliveryUploadOff => {
                 &[(r"S-1-5-20\Software\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Settings", "DownloadMode", 0)]
@@ -363,6 +384,9 @@ impl Tweak {
             Tweak::WindowedGames => read_sz(DX_PREFS, DX_GLOBAL).unwrap_or_else(|| "-".into()),
             Tweak::UsbSuspendOff => usb_suspend()?.to_string(),
             Tweak::NvShaderCache => super::nvidia::shader_cache()?.to_string(),
+            Tweak::ServiceGrouping => {
+                read_dword_in(Hive::Machine, SVCHOST_CONTROL, SVCHOST_THRESHOLD).map_or("-".to_string(), |v| v.to_string())
+            }
             _ => self
                 .registry()
                 .iter()
@@ -430,6 +454,14 @@ impl Tweak {
                 run_hidden("powercfg", &["/setacvalueindex", "SCHEME_CURRENT", SUB_USB, USB_SELECTIVE_SUSPEND, &value.to_string()])?;
                 run_hidden("powercfg", &["/setactive", "SCHEME_CURRENT"]).map(|_| ())
             }
+            Tweak::ServiceGrouping => {
+                let value = match saved {
+                    Some("-") => None,
+                    Some(s) => Some(s.parse::<u32>().map_err(|_| "Saved value is invalid.".to_string())?),
+                    None => Some(grouping_threshold(installed_kb())),
+                };
+                write_dword_in(Hive::Machine, SVCHOST_CONTROL, SVCHOST_THRESHOLD, value)
+            }
             Tweak::NvShaderCache => {
                 let mb = match saved {
                     Some(s) => s.parse::<u32>().map_err(|_| "Saved value is invalid.".to_string())?,
@@ -459,6 +491,11 @@ impl Tweak {
             Tweak::UsbSuspendOff => usb_suspend().is_ok_and(|v| v == 0),
             // Only ever raised: a bigger cache (or unlimited) already counts.
             Tweak::NvShaderCache => super::nvidia::shader_cache().is_ok_and(|mb| mb >= super::nvidia::SHADER_CACHE_TARGET_MB),
+            // AtlasOS groups service by service instead (SvcHostSplitDisable); that counts too.
+            Tweak::ServiceGrouping => {
+                read_dword_in(Hive::Machine, SVCHOST_CONTROL, SVCHOST_THRESHOLD).is_some_and(|t| u64::from(t) > installed_kb())
+                    || super::analysis::grouped_services() >= 20
+            }
             // A Delivery Optimization policy wins over the Settings switch; peering off there counts too.
             Tweak::DeliveryUploadOff => {
                 matches!(read_dword_in(Hive::Machine, DO_POLICY, "DODownloadMode"), Some(0 | 99 | 100))
@@ -524,6 +561,26 @@ enum Hive {
     Machine,
     /// The Network Service account's settings (HKEY_USERS\S-1-5-20; keys include the SID).
     NetworkService,
+}
+
+const SVCHOST_CONTROL: &str = r"SYSTEM\CurrentControlSet\Control";
+const SVCHOST_THRESHOLD: &str = "SvcHostSplitThresholdInKB";
+
+/// Installed memory in KB.
+fn installed_kb() -> u64 {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut m = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
+    if unsafe { GlobalMemoryStatusEx(&mut m) }.is_ok() {
+        m.ullTotalPhys / 1024
+    } else {
+        0
+    }
+}
+
+/// The next whole GiB above installed memory, in KB: services are grouped whenever memory is below the threshold.
+fn grouping_threshold(installed_kb: u64) -> u32 {
+    let gib = 1_048_576u64;
+    u32::try_from((installed_kb / gib + 1) * gib).unwrap_or(u32::MAX)
 }
 
 const DO_POLICY: &str = r"SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization";
@@ -747,6 +804,14 @@ mod tests {
         assert!(is_guid("00000000-0000-0000-0000-000000000000"));
         assert!(!is_guid("ded574b545a04f42873746345c09c238abcd"));
         assert!(!is_guid("ded574b5-45a0-4f42-8737-46345c09c23g"));
+    }
+
+    #[test]
+    fn grouping_threshold_is_above_installed_memory() {
+        let sixteen_gb = 16_423_652; // what this PC reports, a little under 16 GiB
+        assert_eq!(super::grouping_threshold(sixteen_gb), 16 * 1_048_576);
+        assert!(u64::from(super::grouping_threshold(16 * 1_048_576)) > 16 * 1_048_576);
+        assert!(u64::from(super::grouping_threshold(4_000_000)) > 4_000_000);
     }
 
     #[test]

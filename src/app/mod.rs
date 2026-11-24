@@ -30,6 +30,8 @@ pub struct App {
     pub(crate) startup: StartupState,
     pub(crate) services: ServicesState,
     pub(crate) clean: CleanTestState,
+    pub(crate) analysis: AnalysisState,
+    pub(crate) profile: ProfileState,
     pub(crate) gaming: GamingState,
     pub(crate) opt: OptState,
     pub(crate) gamemode: GameModeState,
@@ -76,6 +78,8 @@ impl App {
             upgrades: UpgradeState::default(),
             startup: StartupState::default(),
             services: ServicesState::default(),
+            analysis: AnalysisState::default(),
+            profile: ProfileState::default(),
             clean: CleanTestState { active: crate::cleantest::active_counts(), ..Default::default() },
             gaming: GamingState { selected: preset_selection(Preset::Balanced, build), ..Default::default() },
             opt: OptState::default(),
@@ -670,6 +674,7 @@ impl App {
                 lines.extend(startup::restore_all());
                 lines.extend(crate::services::restore_all());
                 lines.extend(crate::cleantest::end());
+                lines.extend(crate::optimizer::profiles::undo());
                 lines.extend(gaming::restore_all_games());
                 lines.extend(health::restore_displays());
             }
@@ -724,6 +729,7 @@ impl App {
             Action::UndoFixes(fixes) => self.apply_fixes(ctx, fixes, true),
             Action::UpdateApps(apps) => self.start_app_queue(ctx, apps, false),
             Action::InstallApps(apps) => self.start_app_queue(ctx, apps, true),
+            Action::ApplyProfile(items) => self.profile.apply.start(ctx, move || crate::optimizer::profiles::apply(&items)),
             Action::ApplyServices(rows) => self.services.apply.start(ctx, move || rows.iter().flat_map(crate::services::apply).collect()),
             Action::InstallDrivers(drivers) => {
                 let ids: Vec<String> = drivers.iter().map(|d| d.id.clone()).collect();
@@ -965,6 +971,29 @@ impl App {
             self.startup.memory = crate::gamemode::watch::process_memory(&names);
             self.startup.entries = entries;
         }
+        if let Some((now, findings)) = self.analysis.job.poll() {
+            // The first measurement becomes the baseline, so there is always something to compare with later.
+            if self.analysis.baseline.is_none() && crate::optimizer::analysis::save_baseline(&now).is_ok() {
+                self.analysis.baseline = Some(now);
+            }
+            self.analysis.now = Some(now);
+            self.analysis.findings = findings;
+        }
+        if let Some((hw, items)) = self.profile.plan.poll() {
+            // Security-sensitive and removal items start unticked; everything else that can change starts ticked.
+            self.profile.ticked = items.iter().filter(|i| i.offered() && !i.sensitive).map(|i| i.id()).collect();
+            self.profile.hw = Some(hw);
+            self.profile.items = items;
+        }
+        if let Some(lines) = self.profile.apply.poll() {
+            if !lines.is_empty() {
+                self.show_notice("Profile", lines.join("\n"));
+            }
+            self.profile.loaded = None;
+            self.services.loaded = false;
+            self.services.list.clear();
+            self.refresh_gaming(ctx);
+        }
         if let Some(p) = self.clean.plan.poll() {
             self.clean.loaded = Some(p);
         }
@@ -1132,6 +1161,10 @@ impl eframe::App for App {
                     if self.clean.active.is_none() {
                         self.open_clean_test(ctx);
                     }
+                }
+                "profile" => {
+                    self.gaming.windows_tab = WindowsTab::Performance;
+                    self.go(Page::Windows, ctx);
                 }
                 "services" => {
                     self.gaming.windows_tab = WindowsTab::Services;

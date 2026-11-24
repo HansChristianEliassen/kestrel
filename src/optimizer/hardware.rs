@@ -30,6 +30,11 @@ pub fn checks(smbios: Option<&[u8]>, cpu: &str) -> Vec<Check> {
     out
 }
 
+/// A battery is installed (laptop, tablet or handheld): settings that cost battery life are left out of profiles.
+pub fn has_battery() -> bool {
+    power_status().is_some_and(|p| p.BatteryFlag != 128 && p.BatteryFlag != 255)
+}
+
 fn power_status() -> Option<SYSTEM_POWER_STATUS> {
     let mut p = SYSTEM_POWER_STATUS::default();
     unsafe { GetSystemPowerStatus(&mut p) }.ok().map(|_| p)
