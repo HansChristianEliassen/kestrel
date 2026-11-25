@@ -1649,7 +1649,7 @@ dependencies = [
 
 [[package]]
 name = "kestrel"
-version = "0.23.1"
+version = "0.24.0"
 dependencies = [
  "eframe",
  "windows",

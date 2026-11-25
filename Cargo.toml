@@ -1,6 +1,6 @@
 [package]
 name = "kestrel"
-version = "0.23.1"
+version = "0.24.0"
 edition = "2021"
 description = "Lightweight Windows cleaner and gaming optimizer"
 license = "PolyForm-Noncommercial-1.0.0"
@@ -18,6 +18,10 @@ windows = { version = "=0.58.0", features = [
     "Management_Deployment",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
     "Win32_System_TaskScheduler",
     "Win32_System_Ioctl",
     "Win32_System_IO",

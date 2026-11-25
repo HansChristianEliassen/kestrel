@@ -47,6 +47,8 @@ pub enum Tweak {
     ServiceGrouping,
     /// Extreme profile only, behind explicit confirmation.
     UpdatesOff,
+    /// A fix for flicker or stutter, not a speed-up: Advanced only, never in a profile.
+    MpoOff,
     // Privacy (Privacy page only; never in a preset).
     PrivacyAdId,
     PrivacyTailored,
@@ -65,7 +67,7 @@ pub struct Info {
 }
 
 impl Tweak {
-    pub const ALL: [Tweak; 23] = [
+    pub const ALL: [Tweak; 24] = [
         Tweak::GameMode,
         Tweak::GameDvrOff,
         Tweak::NoBackgroundApps,
@@ -82,6 +84,7 @@ impl Tweak {
         Tweak::NvShaderCache,
         Tweak::ServiceGrouping,
         Tweak::UpdatesOff,
+        Tweak::MpoOff,
         Tweak::PrivacyAdId,
         Tweak::PrivacyTailored,
         Tweak::PrivacyLanguageList,
@@ -99,7 +102,7 @@ impl Tweak {
     /// Where its registry values live; anything but the user's own settings needs administrator rights.
     fn hive(self) -> Hive {
         match self {
-            Tweak::GpuScheduling | Tweak::MemoryIntegrityOff | Tweak::ServiceGrouping | Tweak::UpdatesOff => Hive::Machine,
+            Tweak::GpuScheduling | Tweak::MemoryIntegrityOff | Tweak::ServiceGrouping | Tweak::UpdatesOff | Tweak::MpoOff => Hive::Machine,
             Tweak::DeliveryUploadOff => Hive::NetworkService,
             _ => Hive::User,
         }
@@ -146,7 +149,9 @@ impl Tweak {
     pub fn takes_effect(self) -> Option<&'static str> {
         match self {
             Tweak::WindowedGames => Some("takes effect the next time each game starts"),
-            Tweak::GpuScheduling | Tweak::MemoryIntegrityOff | Tweak::ServiceGrouping => Some("takes effect after a restart"),
+            Tweak::GpuScheduling | Tweak::MemoryIntegrityOff | Tweak::ServiceGrouping | Tweak::MpoOff => {
+                Some("takes effect after a restart")
+            }
             Tweak::NvShaderCache => Some("takes effect the next time each game starts"),
             _ => None,
         }
@@ -170,6 +175,7 @@ impl Tweak {
             Tweak::NvShaderCache => "nvidia_shader_cache",
             Tweak::ServiceGrouping => "service_grouping",
             Tweak::UpdatesOff => "updates_off",
+            Tweak::MpoOff => "mpo_off",
             Tweak::PrivacyAdId => "privacy_ad_id",
             Tweak::PrivacyTailored => "privacy_tailored",
             Tweak::PrivacyLanguageList => "privacy_language_list",
@@ -278,6 +284,12 @@ impl Tweak {
                 "No update downloads, installs or restarts in the background.",
                 "Security fixes no longer install by themselves, which leaves the PC exposed until you update. FACEIT and ESEA require current updates. Pause updates (Apps > Updates) is the safer choice for a tournament.",
             ),
+            Tweak::MpoOff => (
+                "Turn off multi-plane overlay (MPO)",
+                "MPO lets the graphics card combine screen layers itself. On some setups it causes flicker, black flashes or stutter, especially with G-SYNC, FreeSync or several monitors. This writes the value from NVIDIA's own fix (Dwm OverlayTestMode = 5).",
+                "Stops MPO-related flicker and stutter, if that's what you see. Try updating the graphics driver first.",
+                "Only for that problem: it doesn't add FPS, and the screen may use slightly more power. Reports differ on whether Windows 11 24H2 and later still honor it; if nothing changes, Revert. Needs a restart.",
+            ),
             Tweak::PrivacyAdId => (
                 "Turn off the advertising ID",
                 "Apps can no longer use your advertising ID to tie what you do across apps to personalized ads (Settings > Privacy & security > General).",
@@ -362,6 +374,7 @@ impl Tweak {
             Tweak::PrivacySpeech => &[(r"Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy", "HasAccepted", 0)],
             Tweak::GpuScheduling => &[(r"SYSTEM\CurrentControlSet\Control\GraphicsDrivers", "HwSchMode", 2)],
             Tweak::UpdatesOff => &[(r"SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU", "NoAutoUpdate", 1)],
+            Tweak::MpoOff => &[(r"SOFTWARE\Microsoft\Windows\Dwm", "OverlayTestMode", 5)],
             // The value the Settings switch writes, in the Network Service account that runs Delivery Optimization.
             Tweak::DeliveryUploadOff => {
                 &[(r"S-1-5-20\Software\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Settings", "DownloadMode", 0)]

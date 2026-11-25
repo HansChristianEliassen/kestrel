@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.24.0: Resizable BAR and MPO
+From a comparison with WinUtil, Win11Debloat, Sophia Script and Optimizer: the two performance-related additions with real evidence behind them.
+- **Resizable BAR check (Home > Status):** tells you when Resizable BAR (AMD: Smart Access Memory) is off on a graphics card that supports it (NVIDIA RTX 30 and newer, AMD RX 6000 and newer, Intel Arc), and how to turn it on in the BIOS. Reviews measured about 1 to 3 percent more FPS on average and much better lows in some games. Detection reads the capability Microsoft's DirectX runtime reports (GPU upload heaps need Resizable BAR on a dedicated card); older cards that can't use it get no warning, and nothing is reported when the driver doesn't say.
+- **Turn off multi-plane overlay (Windows > Performance > Individual settings, Advanced):** NVIDIA's own fix for flicker, black flashes or stutter with G-SYNC, FreeSync or several monitors (`Dwm\OverlayTestMode` = 5). A fix for that problem, not a speed-up; reports differ on whether Windows 11 24H2 and later still honor it. Saved first, Revert puts it back, needs a restart.
+- **Not added, with reasons:** the Ultimate Performance plan (on a plugged-in PC it differs from High performance only in never turning off hard disks), network adapter power and interrupt settings (no solid gaming measurements; interrupt moderation off raises CPU use), "fastest DNS" (doesn't change in-game ping), turning off IPv6 or Teredo (Teredo is used by Xbox party chat), and visual effects for best performance (no FPS effect).
+
 ## 0.23.1: Protected tasks
 - **Extreme no longer offers the Windows AI scheduled tasks** (Recall, Click to Do). Windows lets only itself change them, even for administrators (xOS gets around this by running as TrustedInstaller). Removing Recall still turns Recall off.
 - **Clearer error:** a task Windows protects now says so, instead of asking you to restart as administrator when you already are.

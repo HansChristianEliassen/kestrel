@@ -1,6 +1,7 @@
 //! Hardware setup mistakes that cost FPS and that people rarely know about: the screen plugged into the
 //! motherboard, one memory stick (single channel), a laptop on battery or Energy saver, and the scheduling
-//! requirements of AMD's dual-CCD X3D processors. Read-only; each finding says what to do.
+//! requirements of AMD's dual-CCD X3D processors, and Resizable BAR left off in the BIOS. Read-only; each finding
+//! says what to do.
 
 use windows::core::PCWSTR;
 use windows::Win32::Graphics::Gdi::{EnumDisplayDevicesW, DISPLAY_DEVICEW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP};
@@ -22,6 +23,7 @@ pub fn checks(smbios: Option<&[u8]>, cpu: &str) -> Vec<Check> {
     if !laptop {
         out.extend(screen_port());
         out.extend(smbios.and_then(memory_channels));
+        out.extend(resizable_bar_check());
     }
     if let (true, Some(p)) = (laptop, power) {
         out.push(laptop_power(&p));
@@ -38,6 +40,62 @@ pub fn has_battery() -> bool {
 fn power_status() -> Option<SYSTEM_POWER_STATUS> {
     let mut p = SYSTEM_POWER_STATUS::default();
     unsafe { GetSystemPowerStatus(&mut p) }.ok().map(|_| p)
+}
+
+// ---- Resizable BAR -----------------------------------------------------------------------------
+
+/// Whether the dedicated graphics card has Resizable BAR (Smart Access Memory) on, as the D3D12 runtime reports it:
+/// Microsoft's GPU upload heaps need it on a dedicated card. (card name, on). None without a dedicated card, or when
+/// the runtime or driver doesn't report the capability, so an old driver never reads as "off".
+pub fn resizable_bar() -> Option<(String, bool)> {
+    use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0;
+    use windows::Win32::Graphics::Direct3D12::{
+        D3D12CreateDevice, ID3D12Device, D3D12_FEATURE_D3D12_OPTIONS16, D3D12_FEATURE_DATA_D3D12_OPTIONS16,
+    };
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE};
+    unsafe {
+        let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
+        let mut i = 0;
+        while let Ok(adapter) = factory.EnumAdapters1(i) {
+            i += 1;
+            let Ok(desc) = adapter.GetDesc1() else { continue };
+            let name = String::from_utf16_lossy(&desc.Description).trim_end_matches('\0').trim().to_string();
+            if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 || integrated(&name) || desc.DedicatedVideoMemory < (1 << 30) {
+                continue;
+            }
+            let mut device: Option<ID3D12Device> = None;
+            if D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_11_0, &mut device).is_err() {
+                continue;
+            }
+            let mut data = D3D12_FEATURE_DATA_D3D12_OPTIONS16::default();
+            let size = std::mem::size_of::<D3D12_FEATURE_DATA_D3D12_OPTIONS16>() as u32;
+            device?.CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS16, &mut data as *mut _ as *mut _, size).ok()?;
+            return Some((name, data.GPUUploadHeapSupported.as_bool()));
+        }
+        None
+    }
+}
+
+/// Graphics cards whose vendor supports Resizable BAR: NVIDIA RTX 30 and newer, AMD RX 6000 and newer, Intel Arc.
+/// Older cards can't use it, so "off" isn't a mistake there.
+fn supports_resizable_bar(gpu: &str) -> bool {
+    let g = gpu.to_lowercase();
+    ["rtx 30", "rtx 40", "rtx 50", "rx 6", "rx 7", "rx 9", "arc"].iter().any(|s| g.contains(s))
+}
+
+fn resizable_bar_check() -> Option<Check> {
+    let (gpu, on) = resizable_bar()?;
+    if !on && !supports_resizable_bar(&gpu) {
+        return None;
+    }
+    let detail = if on {
+        format!("On for the {gpu}: the processor can reach all of its graphics memory.")
+    } else {
+        format!(
+            "Off for the {gpu}. It's a BIOS setting: turn on Above 4G Decoding and Resizable BAR (AMD: Smart Access Memory), with CSM off. If it's already on there, update the graphics driver: older drivers don't report it. Reviews measured about 1 to 3 percent more FPS on average and much better lows in some games; a few games run slightly slower."
+        )
+    };
+    Some(check("Resizable BAR", detail, !on, None))
 }
 
 // ---- Screen plugged into the motherboard -------------------------------------------------------
@@ -199,6 +257,30 @@ fn x3d(cpu: &str) -> Option<Check> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "reads this PC's graphics card (read-only)"]
+    fn live_resizable_bar() {
+        println!("{:?}", super::resizable_bar());
+    }
+
+    #[test]
+    fn resizable_bar_only_where_supported() {
+        for yes in [
+            "NVIDIA GeForce RTX 3070",
+            "NVIDIA GeForce RTX 4090",
+            "NVIDIA GeForce RTX 5080",
+            "AMD Radeon RX 6800 XT",
+            "AMD Radeon RX 7900 XTX",
+            "AMD Radeon RX 9070",
+            "Intel(R) Arc(TM) A770 Graphics",
+        ] {
+            assert!(super::supports_resizable_bar(yes), "{yes}");
+        }
+        for no in ["NVIDIA GeForce RTX 2070 SUPER", "NVIDIA GeForce GTX 1080", "AMD Radeon RX 580", "AMD Radeon RX 5700 XT"] {
+            assert!(!super::supports_resizable_bar(no), "{no}");
+        }
+    }
+
     use super::*;
 
     #[test]
