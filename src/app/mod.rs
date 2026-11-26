@@ -32,6 +32,9 @@ pub struct App {
     pub(crate) clean: CleanTestState,
     pub(crate) analysis: AnalysisState,
     pub(crate) profile: ProfileState,
+    pub(crate) tools_tab: ToolsTab,
+    pub(crate) sidebar_collapsed: bool,
+    pub(crate) net: NetTestState,
     pub(crate) gaming: GamingState,
     pub(crate) opt: OptState,
     pub(crate) gamemode: GameModeState,
@@ -79,7 +82,10 @@ impl App {
             startup: StartupState::default(),
             services: ServicesState::default(),
             analysis: AnalysisState::default(),
-            profile: ProfileState::default(),
+            profile: ProfileState { applied: crate::optimizer::profiles::has_record(), ..Default::default() },
+            tools_tab: ToolsTab::default(),
+            sidebar_collapsed: false,
+            net: NetTestState::default(),
             clean: CleanTestState { active: crate::cleantest::active_counts(), ..Default::default() },
             gaming: GamingState { selected: preset_selection(Preset::Balanced, build), ..Default::default() },
             opt: OptState::default(),
@@ -478,8 +484,14 @@ impl App {
                 if self.gaming.games.is_empty() {
                     self.load_games(ctx);
                 }
+            }
+            Page::GameMode => {
+                if self.gaming.games.is_empty() {
+                    self.load_games(ctx);
+                }
                 self.gamemode.apps = self.gamemode.background_apps();
             }
+            Page::Gpu | Page::Network | Page::Input | Page::Cleaner => self.refresh_gaming(ctx),
             Page::Settings => {
                 self.history = read_history();
                 self.about = health::system_summary();
@@ -990,9 +1002,13 @@ impl App {
                 self.show_notice("Profile", lines.join("\n"));
             }
             self.profile.loaded = None;
+            self.profile.applied = crate::optimizer::profiles::has_record();
             self.services.loaded = false;
             self.services.list.clear();
             self.refresh_gaming(ctx);
+        }
+        if let Some(r) = self.net.job.poll() {
+            self.net.last = Some(r);
         }
         if let Some(p) = self.clean.plan.poll() {
             self.clean.loaded = Some(p);
@@ -1195,7 +1211,7 @@ impl eframe::App for App {
             self.refresh_gaming(ctx);
         }
         egui::SidePanel::left("nav")
-            .exact_width(212.0)
+            .exact_width(if self.sidebar_collapsed { 60.0 } else { 220.0 })
             .resizable(false)
             .show_separator_line(false)
             .frame(egui::Frame::default().fill(SIDEBAR).inner_margin(egui::Margin { left: 8, right: 8, top: 16, bottom: 12 }))
@@ -1207,12 +1223,18 @@ impl eframe::App for App {
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                     // 12 px gutter so the scrollbar never sits on the lists' edge.
                     ui.set_max_width((ui.available_width() - 12.0).min(920.0));
+                    self.status_bar(ui);
                     self.update_banner(ui);
                     self.clean_test_banner(ui);
                     match self.page {
                         Page::Dashboard => self.dashboard(ui),
+                        Page::GameMode => self.game_mode_screen(ui),
                         Page::Games => self.games_page(ui),
                         Page::Windows => self.windows_page(ui),
+                        Page::Gpu => self.gpu_page(ui),
+                        Page::Network => self.network_page(ui),
+                        Page::Input => self.input_page(ui),
+                        Page::Tools => self.tools_page(ui),
                         Page::Cleaner => self.cleaner_page(ui),
                         Page::Apps => self.apps_page(ui),
                         Page::Settings => self.settings_page(ui),

@@ -7,6 +7,7 @@ mod game_settings;
 mod gamemode;
 mod games;
 mod measure;
+mod pages;
 mod privacy;
 mod profiles;
 mod services;
@@ -91,7 +92,7 @@ pub fn apply_theme(ctx: &egui::Context) {
 /// Sidebar logo size; the bird fills about two thirds of it.
 const BRAND: f32 = 36.0;
 
-fn nav_item(ui: &mut Ui, page: Page, selected: bool) -> egui::Response {
+fn nav_item(ui: &mut Ui, page: Page, selected: bool, collapsed: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, page.label()));
     let painter = ui.painter();
@@ -105,16 +106,44 @@ fn nav_item(ui: &mut Ui, page: Page, selected: bool) -> egui::Response {
     let color = if selected { TEXT } else { TEXT_2 };
     // Icons in a fixed 16 px box, labels on one baseline.
     painter.text(egui::pos2(rect.left() + 22.0, rect.center().y), Align2::CENTER_CENTER, page.icon(), icon_font(16.0), color);
-    let font = if selected { semibold(BODY) } else { FontId::proportional(BODY) };
-    painter.text(rect.left_center() + vec2(42.0, 0.0), Align2::LEFT_CENTER, page.label(), font, color);
+    if !collapsed {
+        let font = if selected { semibold(BODY) } else { FontId::proportional(BODY) };
+        painter.text(rect.left_center() + vec2(42.0, 0.0), Align2::LEFT_CENTER, page.label(), font, color);
+    }
     if resp.has_focus() {
         painter.rect_stroke(rect.shrink(1.0_f32), CornerRadius::same(R_CONTROL), Stroke::new(2.0_f32, TEXT), egui::StrokeKind::Inside);
     }
-    resp
+    if collapsed {
+        resp.on_hover_text(page.label())
+    } else {
+        resp
+    }
+}
+
+/// Which page shows a Windows setting.
+pub(crate) fn tweak_page(t: Tweak) -> Page {
+    match t {
+        Tweak::GpuScheduling | Tweak::NvShaderCache | Tweak::MpoOff => Page::Gpu,
+        Tweak::DeliveryUploadOff => Page::Network,
+        Tweak::NoMouseAccel | Tweak::UsbSuspendOff => Page::Input,
+        _ => Page::Windows,
+    }
+}
+
+/// A square button showing one icon, with a tooltip.
+fn icon_button(ui: &mut Ui, glyph: &str, tip: &str) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(R_CONTROL), Color32::from_rgb(0x2a, 0x2a, 0x2a));
+    }
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, glyph, icon_font(14.0), TEXT_2);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+    resp.on_hover_text(tip).clicked()
 }
 
 impl App {
     pub(crate) fn sidebar(&mut self, ui: &mut Ui) {
+        let collapsed = self.sidebar_collapsed;
         let brand = self
             .brand
             .get_or_insert_with(|| {
@@ -124,49 +153,131 @@ impl App {
                 ui.ctx().load_texture("brand", image, egui::TextureOptions::LINEAR)
             })
             .clone();
+        let mut toggle_side = false;
         ui.horizontal(|ui| {
             // Page icons start 14 px into their row and labels at 42 px; the bird starts a quarter into its square.
             let row = ui.cursor().left();
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(14.0 - BRAND * 0.25);
             ui.add(egui::Image::new(&brand).fit_to_exact_size(vec2(BRAND, BRAND)));
-            // Painted like the page names (nav_item), so it starts exactly where they do.
-            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), BRAND), Sense::hover());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Kestrel"));
-            ui.painter().text(egui::pos2(row + 42.0, rect.center().y), Align2::LEFT_CENTER, "Kestrel", semibold(15.0), TEXT);
+            if !collapsed {
+                // Painted like the page names (nav_item), so it starts exactly where they do.
+                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width() - 28.0, BRAND), Sense::hover());
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Kestrel"));
+                ui.painter().text(egui::pos2(row + 42.0, rect.center().y), Align2::LEFT_CENTER, "Kestrel", semibold(15.0), TEXT);
+                toggle_side = icon_button(ui, icon::MENU, "Collapse the sidebar");
+            }
         });
-        ui.add_space(S4 + 2.0);
+        if collapsed {
+            ui.add_space(S2);
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                toggle_side = icon_button(ui, icon::MENU, "Expand the sidebar");
+            });
+        }
+        ui.add_space(S4);
         ui.spacing_mut().item_spacing.y = 2.0;
         let mut nav = None;
-        // Three quiet groups: the overview, the system tools, and the gaming pages.
-        for (i, p) in Page::ALL.into_iter().filter(|p| *p != Page::Settings).enumerate() {
-            // Groups: Home · Games · the PC tools (Windows, Clean up, Apps).
-            if matches!(p, Page::Games | Page::Windows) && i > 0 {
-                ui.add_space(S3);
-            }
-            if nav_item(ui, p, self.page == p).clicked() {
+        for p in Page::ALL.into_iter().filter(|p| *p != Page::Settings) {
+            if nav_item(ui, p, self.page == p, collapsed).clicked() {
                 nav = Some(p);
             }
         }
         ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(14.0);
-                let (kind, text) = if self.admin { (Status::Ok, "Administrator") } else { (Status::Neutral, "Standard user") };
-                status(ui, kind, text);
-            });
-            if self.gamemode.on.is_some() {
+            if !collapsed {
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
-                    status(ui, Status::Ok, "Game Mode on");
+                    let (kind, text) = if self.admin { (Status::Ok, "Administrator") } else { (Status::Neutral, "Standard user") };
+                    status(ui, kind, text);
                 });
+                ui.add_space(S2);
             }
-            ui.add_space(S2);
-            if nav_item(ui, Page::Settings, self.page == Page::Settings).clicked() {
+            if nav_item(ui, Page::Settings, self.page == Page::Settings, collapsed).clicked() {
                 nav = Some(Page::Settings);
             }
+            ui.add_space(S2);
+            if collapsed {
+                if self.gamemode.on.is_some() {
+                    ui.horizontal(|ui| {
+                        ui.add_space(14.0);
+                        status(ui, Status::Ok, "").on_hover_text("Game Mode is on");
+                    });
+                }
+            } else {
+                self.game_mode_card(ui);
+            }
         });
+        if toggle_side {
+            self.sidebar_collapsed = !self.sidebar_collapsed;
+        }
         if let Some(p) = nav {
             self.go(p, ui.ctx());
+        }
+    }
+
+    /// The Game Mode switch, always at hand at the bottom of the sidebar.
+    fn game_mode_card(&mut self, ui: &mut Ui) {
+        let gm = &self.gamemode;
+        let busy = gm.job.running();
+        let mut on = gm.on.is_some();
+        let games = gm.config.games.len();
+        let line = match &gm.on {
+            Some(o) => o.game.as_ref().map_or("On until you turn it off".to_string(), |g| format!("On for {g}")),
+            None if gm.config.auto => format!("Turns on with {games} game{}", if games == 1 { "" } else { "s" }),
+            None => "Quiets your PC while you play".to_string(),
+        };
+        let mut changed = false;
+        egui::Frame::default()
+            .fill(LAYER)
+            .stroke(Stroke::new(1.0_f32, STROKE))
+            .corner_radius(CornerRadius::same(R_GROUP))
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                // The sidebar's bottom area stacks upwards: the caption first puts it below the title.
+                caption(ui, line);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Game Mode").font(semibold(BODY)).color(TEXT));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        changed = ui.add_enabled_ui(!busy, |ui| toggle(ui, &mut on)).inner.changed();
+                    });
+                });
+            });
+        if changed {
+            self.set_game_mode(ui.ctx(), on);
+        }
+    }
+
+    /// Version, what Kestrel is doing right now, and where to report a problem: above every page.
+    pub(crate) fn status_bar(&mut self, ui: &mut Ui) {
+        let (kind, text) = if self.clean.active.is_some() {
+            (Status::Caution, "Clean test on".to_string())
+        } else if let Some(on) = &self.gamemode.on {
+            (Status::Ok, on.game.as_ref().map_or("Game Mode on".to_string(), |g| format!("Game Mode on: {g}")))
+        } else if self.profile.applied {
+            (Status::Ok, "Profile applied".to_string())
+        } else {
+            (Status::Neutral, "Ready to optimize".to_string())
+        };
+        let mut report = false;
+        ui.horizontal(|ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                report = link(ui, "Report a problem").clicked();
+                ui.add_space(S3);
+                egui::Frame::default()
+                    .stroke(Stroke::new(1.0_f32, STROKE))
+                    .corner_radius(CornerRadius::same(255))
+                    .inner_margin(egui::Margin::symmetric(12, 4))
+                    .show(ui, |ui| {
+                        status(ui, kind, &text);
+                    });
+                ui.add_space(S3);
+                caption(ui, format!("Kestrel {}", env!("CARGO_PKG_VERSION")));
+            });
+        });
+        ui.add_space(S3);
+        if report {
+            open_uri(&format!("{}/issues/new", crate::update::REPO));
         }
     }
 
@@ -391,12 +502,21 @@ impl App {
     }
 
     pub(crate) fn cleaner_page(&mut self, ui: &mut Ui) {
-        page_header(ui, "Clean up", "Nothing is deleted until you confirm.");
+        page_header(ui, "Clean up & health", "Free up space and check this PC. Nothing is deleted until you confirm.");
         pivot(
             ui,
             &mut self.cleaner.tab,
-            &[(CleanupTab::Junk, "Junk files"), (CleanupTab::Large, "Large files"), (CleanupTab::Usage, "Disk usage")],
+            &[
+                (CleanupTab::Junk, "Junk files"),
+                (CleanupTab::Large, "Large files"),
+                (CleanupTab::Usage, "Disk usage"),
+                (CleanupTab::Health, "Health"),
+            ],
         );
+        if self.cleaner.tab == CleanupTab::Health {
+            self.page_checks(ui, None);
+            return;
+        }
         if self.cleaner.tab == CleanupTab::Usage {
             self.disk_usage_tab(ui);
             return;
@@ -1000,46 +1120,55 @@ impl App {
                 (WindowsTab::Startup, "Startup apps"),
                 (WindowsTab::Services, "Services"),
                 (WindowsTab::Privacy, "Privacy"),
-                (WindowsTab::Analysis, "System analysis"),
             ],
         );
         self.gaming.windows_tab = tab;
         match tab {
-            WindowsTab::Performance => self.gaming_settings_tab(ui),
+            WindowsTab::Performance => self.settings_list(ui, Page::Windows),
             WindowsTab::Startup => self.startup_page(ui),
             WindowsTab::Services => self.services_tab(ui),
             WindowsTab::Privacy => self.privacy_page(ui),
-            WindowsTab::Analysis => self.analysis_tab(ui),
         }
     }
 
-    fn gaming_settings_tab(&mut self, ui: &mut Ui) {
-        self.profile_panel(ui);
-        section(ui, "Individual settings", |_| {});
+    /// The Windows settings of one page: Windows (with the profile), GPU, Network or Controller & input.
+    pub(crate) fn settings_list(&mut self, ui: &mut Ui, page: Page) {
+        let windows = page == Page::Windows;
+        if windows {
+            self.profile_panel(ui);
+            section(ui, "Individual settings", |_| {});
+        }
+        let in_page = |t: &Tweak| tweak_page(*t) == page;
         let build = self.build;
         let admin = self.admin;
         let g = &mut self.gaming;
-        let chosen: Vec<Tweak> = Tweak::ALL.into_iter().filter(|t| !t.is_privacy() && g.selected[t.index()]).collect();
+        let chosen: Vec<Tweak> = Tweak::ALL.into_iter().filter(|t| !t.is_privacy() && in_page(t) && g.selected[t.index()]).collect();
         let busy = g.apply.running();
         let (mut apply, mut restore, mut restore_point) = (false, false, false);
         ui.add_space(S2);
-        ui.horizontal(|ui| {
-            apply = accent_button(ui, !busy && !chosen.is_empty(), &format!("Apply {} selected", chosen.len())).clicked();
-            restore = button(ui, !busy, "Restore originals").clicked();
-            restore_point = button(ui, !busy && admin, "Create restore point")
-                .on_hover_text("A Windows System Restore point: a full rollback option on top of Kestrel's own backups.")
-                .on_disabled_hover_text("Needs administrator rights (Settings > Restart as administrator).")
-                .clicked();
-            if busy || g.status_job.running() {
-                progress(ui, if busy { "Working…" } else { "Reading current settings…" });
-            }
-        });
+        // The smaller pages show the button only once something is ticked.
+        if windows || busy || !chosen.is_empty() {
+            ui.horizontal(|ui| {
+                apply = accent_button(ui, !busy && !chosen.is_empty(), &format!("Apply {} selected", chosen.len())).clicked();
+                if windows {
+                    restore = button(ui, !busy, "Restore originals").clicked();
+                    restore_point = button(ui, !busy && admin, "Create restore point")
+                        .on_hover_text("A Windows System Restore point: a full rollback option on top of Kestrel's own backups.")
+                        .on_disabled_hover_text("Needs administrator rights (Settings > Restart as administrator).")
+                        .clicked();
+                }
+                if busy || g.status_job.running() {
+                    progress(ui, if busy { "Working…" } else { "Reading current settings…" });
+                }
+            });
+        }
 
         // Saved original but no longer active: Windows, another app or the user changed it back.
         let changed: Vec<Tweak> = Tweak::ALL
             .into_iter()
             .filter(|t| {
                 !t.is_privacy()
+                    && in_page(t)
                     && t.unsupported(build).is_none()
                     && g.status.get(t.index()).is_some_and(|(applied, backup, _)| *backup && !applied)
             })
@@ -1052,7 +1181,9 @@ impl App {
         }
 
         let mut revert = None;
-        for (title, recommended) in [("Recommended", true), ("Advanced", false)] {
+        let lists: &[(&str, Option<bool>)] =
+            if windows { &[("Recommended", Some(true)), ("Advanced", Some(false))] } else { &[("Settings", None)] };
+        for &(title, recommended) in lists {
             section(ui, title, |_| {});
             group(ui, |ui| {
                 let has_backup = |t: &Tweak| g.status.get(t.index()).is_some_and(|s| s.1);
@@ -1061,9 +1192,10 @@ impl App {
                     .into_iter()
                     .filter(|t| {
                         !t.is_privacy()
+                            && in_page(t)
                             && *t != Tweak::MemoryIntegrityOff
                             && *t != Tweak::UpdatesOff
-                            && Preset::Balanced.includes(*t) == recommended
+                            && recommended.is_none_or(|r| Preset::Balanced.includes(*t) == r)
                             && (*t != Tweak::NoBackgroundApps || has_backup(t))
                     })
                     .collect();
@@ -1072,8 +1204,9 @@ impl App {
                 }
             });
         }
-        ui.add_space(S4);
-        egui::CollapsingHeader::new(RichText::new("What Kestrel doesn't do, and why").color(TEXT_2)).show(ui, |ui| {
+        if windows {
+            ui.add_space(S4);
+            egui::CollapsingHeader::new(RichText::new("What Kestrel doesn't do, and why").color(TEXT_2)).show(ui, |ui| {
             for (what, why) in [
                 ("Strip or \"debloat\" Windows, or install a custom Windows", "Independent tests of debloated builds found no real FPS gain, and undoing them means reinstalling Windows. Apps that aren't running don't slow games."),
                 ("Disable services Windows, games or anti-cheat need, or Microsoft Defender", "Tests show no FPS gain from disabling services, and it breaks features or leaves the PC unprotected. The Services tab only offers ones a gaming PC doesn't use."),
@@ -1087,6 +1220,7 @@ impl App {
                 ui.add_space(S1);
             }
         });
+        }
         if let Some(t) = revert {
             self.start_restore(ui.ctx(), vec![t], false);
         }

@@ -7,6 +7,7 @@ pub mod gaming;
 pub mod hardware;
 pub mod health;
 pub mod measure;
+pub mod network;
 pub mod nvidia;
 pub mod profiles;
 pub mod tweaks;

@@ -27,21 +27,23 @@ impl App {
             changed = ui.add_enabled_ui(!busy, |ui| toggle(ui, &mut on)).inner.changed();
         });
         if changed {
-            let ctx = ui.ctx().clone();
-            if on {
-                let profile = self.gamemode.config.manual_profile;
-                self.game_mode_on(&ctx, profile, None);
-            } else {
-                // Turned off by hand during a game: stay off until that game closes.
-                self.gamemode.suppressed = self.gamemode.on.as_ref().is_some_and(|o| o.game.is_some());
-                self.game_mode_off(&ctx);
-            }
+            self.set_game_mode(ui.ctx(), on);
+        }
+    }
+
+    /// Game Mode switched by hand (Home, the sidebar card or the Game Mode page).
+    pub(crate) fn set_game_mode(&mut self, ctx: &eframe::egui::Context, on: bool) {
+        if on {
+            let profile = self.gamemode.config.manual_profile;
+            self.game_mode_on(ctx, profile, None);
+        } else {
+            // Turned off by hand during a game: stay off until that game closes.
+            self.gamemode.suppressed = self.gamemode.on.as_ref().is_some_and(|o| o.game.is_some());
+            self.game_mode_off(ctx);
         }
     }
 
     pub(crate) fn game_mode_page(&mut self, ui: &mut Ui) {
-        secondary(ui, "Quiets your PC while you play; undone when the game closes.");
-        ui.add_space(S2);
         let busy = self.gamemode.job.running();
         let mut save = false;
 

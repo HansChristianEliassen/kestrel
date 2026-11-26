@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.25.0: New layout and network test
+A flat sidebar with one page per area, modeled on HD OPTI's layout, and a connection test.
+- **Sidebar:** Home, Game Mode, Windows, GPU, Network, Controller & input, Games, Clean up & health, Apps and Tools, with Settings at the bottom. The menu button next to the logo collapses it to icons (names show on hover).
+- **Game Mode switch in the sidebar:** always at hand, with what it's doing (on for a game, waiting for your games, or off). Game Mode also has its own page now instead of a tab under Games.
+- **Status bar:** Kestrel's version, what's going on (Clean test on, Game Mode on, profile applied, or ready) and a Report a problem link, above every page.
+- **GPU page:** GPU scheduling, the NVIDIA shader cache and the MPO fix, with the graphics findings (driver, Resizable BAR, refresh rate, VRR and Auto HDR, overlays).
+- **Network page:** a connection test that pings your router and Cloudflare's 1.1.1.1 25 times each (about 4 seconds) and reports ping, jitter and packet loss, and says whether a problem is inside your home network (Wi-Fi, cable) or beyond your router (your provider). Read-only. Also the update-sharing setting and the connection finding.
+- **Controller & input page:** mouse acceleration and USB selective suspend.
+- **Tools page:** System analysis and Clean test (moved from Windows and Home).
+- **Clean up & health:** a Health tab with everything Kestrel found on this PC.
+- Settings moved to GPU, Network and Controller & input are the same settings with the same backups and Revert; profiles still include them.
+
 ## 0.24.0: Resizable BAR and MPO
 From a comparison with WinUtil, Win11Debloat, Sophia Script and Optimizer: the two performance-related additions with real evidence behind them.
 - **Resizable BAR check (Home > Status):** tells you when Resizable BAR (AMD: Smart Access Memory) is off on a graphics card that supports it (NVIDIA RTX 30 and newer, AMD RX 6000 and newer, Intel Arc), and how to turn it on in the BIOS. Reviews measured about 1 to 3 percent more FPS on average and much better lows in some games. Detection reads the capability Microsoft's DirectX runtime reports (GPU upload heaps need Resizable BAR on a dedicated card); older cards that can't use it get no warning, and nothing is reported when the driver doesn't say.

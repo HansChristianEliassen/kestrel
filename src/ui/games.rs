@@ -6,7 +6,7 @@ use std::path::Path;
 use eframe::egui::{self, RichText, Ui};
 
 use super::components::*;
-use crate::app::state::{GameTab, GamingTab};
+use crate::app::state::GameTab;
 use crate::app::App;
 use crate::gamemode::{GameEntry, Profile};
 use crate::optimizer::gaming::GameSetting;
@@ -27,11 +27,7 @@ impl App {
             return self.game_page(ui, i);
         }
         page_header(ui, "Games", "Open a game to measure and tune it.");
-        pivot(ui, &mut self.gaming.tab, &[(GamingTab::Library, "Your games"), (GamingTab::GameMode, "Game Mode")]);
-        match self.gaming.tab {
-            GamingTab::Library => self.games_tab(ui),
-            GamingTab::GameMode => self.game_mode_page(ui),
-        }
+        self.games_tab(ui);
     }
 
     fn game_page(&mut self, ui: &mut Ui, i: usize) {

@@ -12,6 +12,7 @@ Done so far:
 - 0.22 "Clean test": a temporary, reviewed clean boot to rule out other software, measured with Measure.
 - 0.23 "Profiles and System analysis": Balanced / Competitive / Extreme profiles across settings, services and tasks; System analysis with a baseline; detection of other optimizers; service grouping; more diagnostic services.
 - 0.24 "Resizable BAR and MPO": a Resizable BAR check for supported cards and NVIDIA's MPO fix as an opt-in setting.
+- 0.25 "New layout": a flat HD OPTI-style sidebar with GPU, Network, Controller & input and Tools pages, a sidebar Game Mode switch, a status bar, and a network test (ping, jitter, loss to the router and the internet). Next: an input polling-rate test and USB port check, then NVIDIA driver settings.
 
 ## Custom-OS parity plan (from the KernelOS/xOS teardown, November 2026)
 Goal: reach what KernelOS, xOS and AtlasOS do on an official install, keeping only changes with a technical justification, each detected, reversible and honest about its cost.

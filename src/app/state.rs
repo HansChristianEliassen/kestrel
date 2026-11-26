@@ -15,24 +15,46 @@ use crate::upgrade::drivers::DriverUpdate;
 #[derive(Clone, Copy, PartialEq)]
 pub enum Page {
     Dashboard,
-    Games,
+    GameMode,
     Windows,
+    Gpu,
+    Network,
+    Input,
+    Games,
     Cleaner,
     Apps,
+    Tools,
     Settings,
 }
 
 impl Page {
-    /// Sidebar order: Home, then Games, then the PC tools; Settings sits at the bottom.
-    pub const ALL: [Page; 6] = [Page::Dashboard, Page::Games, Page::Windows, Page::Cleaner, Page::Apps, Page::Settings];
+    /// Sidebar order, one entry per area; Settings sits at the bottom.
+    pub const ALL: [Page; 11] = [
+        Page::Dashboard,
+        Page::GameMode,
+        Page::Windows,
+        Page::Gpu,
+        Page::Network,
+        Page::Input,
+        Page::Games,
+        Page::Cleaner,
+        Page::Apps,
+        Page::Tools,
+        Page::Settings,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Page::Dashboard => "Home",
-            Page::Games => "Games",
+            Page::GameMode => "Game Mode",
             Page::Windows => "Windows",
-            Page::Cleaner => "Clean up",
+            Page::Gpu => "GPU",
+            Page::Network => "Network",
+            Page::Input => "Controller & input",
+            Page::Games => "Games",
+            Page::Cleaner => "Clean up & health",
             Page::Apps => "Apps",
+            Page::Tools => "Tools",
             Page::Settings => "Settings",
         }
     }
@@ -41,10 +63,15 @@ impl Page {
         use crate::ui::components::icon;
         match self {
             Page::Dashboard => icon::HOME,
-            Page::Games => icon::GAME,
+            Page::GameMode => icon::LIGHTNING,
             Page::Windows => icon::SPEED,
+            Page::Gpu => icon::MONITOR,
+            Page::Network => icon::NETWORK,
+            Page::Input => icon::MOUSE,
+            Page::Games => icon::GAME,
             Page::Cleaner => icon::BROOM,
             Page::Apps => icon::APPS,
+            Page::Tools => icon::TOOLS,
             Page::Settings => icon::SETTINGS,
         }
     }
@@ -58,7 +85,14 @@ pub enum WindowsTab {
     Startup,
     Services,
     Privacy,
+}
+
+/// Tabs of the Tools page.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum ToolsTab {
+    #[default]
     Analysis,
+    CleanTest,
 }
 
 #[derive(Default)]
@@ -139,6 +173,7 @@ pub enum CleanupTab {
     Junk,
     Large,
     Usage,
+    Health,
 }
 
 #[derive(Default)]
@@ -224,13 +259,6 @@ pub type TweakStatus = Vec<(bool, bool, Option<String>)>;
 /// (display device, old Hz, new Hz)
 pub type RefreshChange = (String, u32, u32);
 
-#[derive(Clone, Copy, PartialEq)]
-/// Tabs of the Games page (when no game is open).
-pub enum GamingTab {
-    Library,
-    GameMode,
-}
-
 /// Tabs on a game's own page.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum GameTab {
@@ -271,7 +299,6 @@ pub struct GamingState {
     pub checks: Vec<Check>,
     pub checks_job: Job<Vec<Check>>,
     pub apply: Job<Vec<String>>,
-    pub tab: GamingTab,
     pub games: Vec<Game>,
     pub games_job: Job<Vec<Game>>,
     pub game_search: String,
@@ -310,7 +337,6 @@ impl Default for GamingState {
             checks: Vec::new(),
             checks_job: Job::default(),
             apply: Job::default(),
-            tab: GamingTab::Library,
             selected_game: None,
             game_tab: GameTab::Measure,
             windows_tab: WindowsTab::Performance,
@@ -536,4 +562,13 @@ pub struct ProfileState {
     pub ticked: std::collections::HashSet<String>,
     /// Applying or undoing: one line per item.
     pub apply: Job<Vec<String>>,
+    /// A profile has been applied and not undone (for the status bar).
+    pub applied: bool,
+}
+
+/// Network > Test.
+#[derive(Default)]
+pub struct NetTestState {
+    pub job: Job<Result<crate::optimizer::network::NetResult, String>>,
+    pub last: Option<Result<crate::optimizer::network::NetResult, String>>,
 }
