@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.29.0: G-SYNC setup in the NVIDIA gaming profile
+- **The NVIDIA gaming profile now includes G-SYNC's lowest-latency setup** when G-SYNC (or G-SYNC Compatible) is on for your main display: Vertical sync On in the driver plus a frame-rate cap a little under the refresh rate, as NVIDIA Reflex picks it (144 Hz → 138 FPS, 165 → 157, 240 → 224). That keeps every frame inside G-SYNC's range, with no tearing and without VSync's added delay. Kestrel reads the G-SYNC state from NVIDIA's driver (NvAPI), so PCs without G-SYNC get nothing extra. Games with NVIDIA Reflex manage the cap themselves.
+- Trade-offs, stated in the setting: FPS is capped just under the refresh rate, and games on a second screen without G-SYNC get VSync.
+- Reverting the profile puts back only the settings it changed. Originals saved by 0.28 leave VSync and the frame limit alone.
+- Reviewed and left out on purpose, as tweaks common in NVIDIA Profile Inspector profiles:
+  - texture filtering "High performance" and its optimizations (≈0–1% FPS on current cards, visible shimmer);
+  - negative LOD bias clamp (image only);
+  - forcing threaded optimization (OpenGL only; Auto already decides);
+  - Ansel off (no measured effect);
+  - forcing Resizable BAR in every game (undocumented, with mixed results: NVIDIA enables it per game);
+  - "CUDA – Force P2 State" (compute work, not games).
+
 ## 0.28.2: NVIDIA gaming profile fix
 - **GPU > Settings no longer says "This PC has no NVIDIA graphics card" when there is one.** The check read the driver's global shader cache size, which a clean driver installation leaves unset. Kestrel now only checks that NVIDIA's driver responds, and says "Needs an NVIDIA graphics card and driver" when it really doesn't.
 

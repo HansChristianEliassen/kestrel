@@ -39,6 +39,21 @@ pub const PRERENDER_LIMIT: u32 = 0x007B_A09E;
 pub const DLSS_SR_OVERRIDE: u32 = 0x10E4_1E01;
 pub const DLSS_SR_PRESET: u32 = 0x10E4_1DF3;
 pub const DLSS_PRESET_LATEST: u32 = 0x00FF_FFFF;
+/// "Vertical Sync" (Force on) and "Frame Rate Limiter" (frames per second), for the G-SYNC setup.
+const VSYNC_MODE: u32 = 0x00A8_79CF;
+const VSYNC_FORCE_ON: u32 = 0x4781_4940;
+const FRAME_LIMIT: u32 = 0x1083_5002;
+// NvAPI display functions: the main display, and its variable refresh (G-SYNC) state.
+const GET_PRIMARY_DISPLAY: u32 = 0x1E9D_8A31;
+const GET_VRR_INFO: u32 = 0xDF8F_DA57;
+
+/// NV_GET_VRR_INFO (version 1): bit 0 of `flags` is bIsVRREnabled, bit 1 bIsVRRPossible, bit 2 bIsVRRRequested.
+#[repr(C)]
+struct VrrInfo {
+    version: u32,
+    flags: u32,
+    reserved: [u32; 4],
+}
 /// Profiles Kestrel creates for games NVIDIA has none for start with this, so Undo can remove them again.
 const OWN_PROFILE: &str = "Kestrel: ";
 
@@ -144,6 +159,19 @@ impl Drs {
             return Err(format!("This NVIDIA driver doesn't support a needed function ({id:#010x})."));
         }
         Ok(std::mem::transmute_copy(&p))
+    }
+
+    /// NV_GET_VRR_INFO flags for the main display.
+    fn primary_vrr(&self) -> Result<u32, String> {
+        unsafe {
+            let primary: unsafe extern "C" fn(*mut u32) -> Status = self.func(GET_PRIMARY_DISPLAY)?;
+            let vrr: unsafe extern "C" fn(u32, *mut VrrInfo) -> Status = self.func(GET_VRR_INFO)?;
+            let mut id = 0u32;
+            check(primary(&mut id), "find the main display")?;
+            let mut info = VrrInfo { version: std::mem::size_of::<VrrInfo>() as u32 | (1 << 16), flags: 0, reserved: [0; 4] };
+            check(vrr(id, &mut info), "read the display's G-SYNC state")?;
+            Ok(info.flags)
+        }
     }
 
     fn base_profile(&self) -> Result<*mut c_void, String> {
@@ -296,7 +324,8 @@ fn rtx_series(name: &str) -> Option<u32> {
 }
 
 /// The global settings Kestrel's NVIDIA gaming profile manages, in the order its saved original lists them.
-const PROFILE: [u32; 5] = [SHADER_CACHE_SIZE, POWER_MODE, PRERENDER_LIMIT, DLSS_SR_OVERRIDE, DLSS_SR_PRESET];
+/// Settings added later go at the end, so originals saved by earlier versions still line up.
+const PROFILE: [u32; 7] = [SHADER_CACHE_SIZE, POWER_MODE, PRERENDER_LIMIT, DLSS_SR_OVERRIDE, DLSS_SR_PRESET, VSYNC_MODE, FRAME_LIMIT];
 
 /// The global profile's own values of these settings (None where it doesn't set one).
 fn global(ids: &[u32]) -> Result<Vec<Option<u32>>, String> {
@@ -329,7 +358,34 @@ fn profile_values(cache_now: Option<u32>) -> Vec<(u32, Option<u32>)> {
     if dlss_model_is_free() {
         v.extend([(DLSS_SR_OVERRIDE, Some(1)), (DLSS_SR_PRESET, Some(DLSS_PRESET_LATEST))]);
     }
+    // G-SYNC's lowest-latency, tear-free setup: VSync on in the driver plus a cap just under the refresh rate.
+    if let Some(cap) = gsync_frame_cap() {
+        v.extend([(VSYNC_MODE, Some(VSYNC_FORCE_ON)), (FRAME_LIMIT, Some(cap))]);
+    }
     v
+}
+
+/// The main display's refresh rate in Hz.
+fn primary_refresh() -> Option<u32> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Graphics::Gdi::{EnumDisplaySettingsW, DEVMODEW, ENUM_CURRENT_SETTINGS};
+    let mut dm = DEVMODEW { dmSize: std::mem::size_of::<DEVMODEW>() as u16, ..Default::default() };
+    unsafe { EnumDisplaySettingsW(PCWSTR::null(), ENUM_CURRENT_SETTINGS, &mut dm) }
+        .as_bool()
+        .then_some(dm.dmDisplayFrequency)
+        .filter(|hz| *hz > 1)
+}
+
+/// A frame cap a little under the refresh rate, as NVIDIA Reflex picks it (144 Hz -> 138, 165 -> 157, 240 -> 224),
+/// so frame times stay inside G-SYNC's range and VSync never adds its queue.
+fn gsync_cap(hz: u32) -> u32 {
+    hz - (hz * hz).div_ceil(3600)
+}
+
+/// The frame cap for the G-SYNC setup, when G-SYNC (or G-SYNC Compatible) is on for the main display.
+pub fn gsync_frame_cap() -> Option<u32> {
+    let flags = Drs::open().ok()?.primary_vrr().ok()?;
+    (flags & 1 != 0).then(primary_refresh).flatten().map(gsync_cap)
 }
 
 /// The profile's settings as they are now, for the saved original: comma-separated, "-" where unset.
@@ -352,7 +408,8 @@ pub fn restore_profile(saved: &str) -> Result<(), String> {
     let parts: Vec<&str> = saved.split(',').collect();
     let values: Result<Vec<(u32, Option<u32>)>, String> = PROFILE
         .iter()
-        .zip(parts.iter().chain(std::iter::repeat(&"-")))
+        // Only what the original lists: settings added in later versions weren't changed, so they're left alone.
+        .zip(parts.iter())
         .map(|(id, p)| match *p {
             "-" => Ok((*id, None)),
             p => p.parse::<u32>().map(|v| (*id, Some(v))).map_err(|_| "Saved value is invalid.".to_string()),
@@ -428,6 +485,18 @@ mod tests {
         restore_profile(&before).unwrap();
         assert_eq!(profile_snapshot().unwrap(), before, "originals back exactly");
         println!("restored: {before}");
+    }
+
+    #[test]
+    fn gsync_caps_match_reflex() {
+        assert_eq!([60, 120, 144, 165, 240, 360].map(gsync_cap), [59, 116, 138, 157, 224, 324]);
+    }
+
+    #[test]
+    #[ignore = "reads this PC's main display and its G-SYNC state"]
+    fn live_gsync() {
+        let drs = Drs::open().unwrap();
+        println!("vrr flags {:#b}, refresh {:?}, cap {:?}", drs.primary_vrr().unwrap(), primary_refresh(), gsync_frame_cap());
     }
 
     #[test]

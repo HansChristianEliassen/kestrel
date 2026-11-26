@@ -269,9 +269,9 @@ impl Tweak {
             ),
             Tweak::NvShaderCache => (
                 "NVIDIA gaming profile",
-                "One profile in the driver's global settings (NVIDIA Control Panel > Manage 3D settings), for every game: Power management mode Prefer maximum performance, Low Latency Mode On, Shader Cache Size 10 GB (a bigger size you set is kept), and on RTX 40 and 50 cards the latest DLSS model. On RTX 20 and 30 cards DLSS is left alone, since the newest model costs FPS there.",
+                "One profile in the driver's global settings (NVIDIA Control Panel > Manage 3D settings), for every game: Power management mode Prefer maximum performance, Low Latency Mode On, Shader Cache Size 10 GB (a bigger size you set is kept), and on RTX 40 and 50 cards the latest DLSS model (RTX 20 and 30 cards keep their DLSS setting, since the newest model costs FPS there). With G-SYNC on for your main display it adds G-SYNC's lowest-latency setup: Vertical sync On and a frame rate cap a little under the refresh rate, as NVIDIA Reflex picks it.",
                 "No downclocking mid-game, less input lag in DirectX 11 games when the graphics card is the limit, fewer shader-compile hitches, and a sharper DLSS image at no cost on new cards.",
-                "The graphics card may stay at higher clocks on the desktop too, using more power and running warmer. Uses up to 10 GB of disk for shaders. Games with NVIDIA Reflex use Reflex instead of Low Latency Mode.",
+                "The graphics card may stay at higher clocks on the desktop too, using more power and running warmer. Uses up to 10 GB of disk for shaders. With G-SYNC, FPS is capped just under the refresh rate, and games on a second, non-G-SYNC screen get VSync. Games with NVIDIA Reflex use Reflex instead of Low Latency Mode.",
             ),
             Tweak::ServiceGrouping => (
                 "Group Windows services into fewer processes",

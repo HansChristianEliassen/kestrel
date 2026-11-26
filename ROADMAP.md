@@ -15,6 +15,7 @@ Done so far:
 - 0.25 "New layout": a flat HD OPTI-style sidebar with GPU, Network, Controller & input and Tools pages, a sidebar Game Mode switch, a status bar, and a network test (ping, jitter, loss to the router and the internet).
 - 0.26 "NVIDIA per-game settings": Prefer maximum performance and Low latency mode per game, in the game's NVIDIA driver profile.
 - 0.27 "Driver Optimizer": NVIDIA driver without the App, its services, overlay, recorder and telemetry, from NVIDIA's lookup or a file, read from NVIDIA's own manifests, installed silently and verified.
+- 0.29 "G-SYNC setup": the NVIDIA gaming profile adds VSync plus a Reflex-style frame cap when G-SYNC is on for the main display.
 - 0.28.1 "Safer driver installs": a visible install window, Kestrel closing itself first, and recovery from interrupted installs.
 - 0.28 "One NVIDIA gaming profile": one global driver profile instead of per-game settings, the driver's own telemetry blocked in the hosts file with a live check, and rollback to the previous stripped driver.
 
