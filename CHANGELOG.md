@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.28.0: One NVIDIA gaming profile, no telemetry
+- **NVIDIA gaming profile (GPU > Settings):** one profile in the driver's global settings that covers every game, instead of settings per game:
+  - Prefer maximum performance;
+  - Low Latency Mode On;
+  - a 10 GB shader cache (a bigger one you set is kept);
+  - on RTX 40 and 50 cards, the latest DLSS model, the same setting as the NVIDIA App's DLSS Override. RTX 20 and 30 cards keep their DLSS setting, since the newest model costs FPS there.
+
+  It replaces the "Bigger NVIDIA shader cache" setting and keeps its backups, so Revert still restores your earlier values. The trade-off is said plainly: the card may stay at higher clocks on the desktop too. Profiles and Set up this PC leave it out on laptops.
+- **Per-game NVIDIA switches from 0.26 are gone from game pages.** One that's still on is shown until you turn it off; Restore everything still puts them back.
+- **Block NVIDIA telemetry (GPU > Driver Optimizer):** the display driver itself carries NVIDIA's telemetry (NvTelemetry inside the NVIDIA Display Container, which reports to `events.telemetry.data.nvidia.com`, `feedbacks.telemetry.data.nvidia.com` and `activation.gfe.nvidia.com`, as its own log shows). It's part of the signed driver, so no package-level strip can remove it. Kestrel blocks those three hosts in the Windows hosts file instead:
+  - precise: game-profile updates and driver downloads keep working;
+  - reversible: switch it off, or use Restore everything;
+  - it survives driver updates.
+
+  The row shows live whether the servers can still be reached and which internet connections NVIDIA's display container has right now.
+- **The Driver Optimizer finishes the job after installing:** it blocks telemetry and applies the gaming profile (both on by default; the profile starts off on laptops), and puts Kestrel's NVIDIA settings back if a clean installation reset them.
+- **Rollback:** the stripped driver you install is kept, along with the one installed before it, so "Reinstall" goes back to the previous driver with one click. Older copies are deleted automatically, and Delete removes the kept ones.
+
+## 0.27.0: Driver Optimizer
+**GPU > Driver Optimizer** installs NVIDIA's driver without the NVIDIA App, its background services, overlay, recorder and telemetry, and keeps every gaming feature. It's built into Kestrel: no NVCleanstall, no 7-Zip, nothing else to install.
+- **Get a driver:** Kestrel finds your card on NVIDIA's own driver lookup and lists recent Game Ready drivers, or Studio drivers, with date and size. Download one (with progress and Cancel), or import a driver file you already have (Import, or drop the .exe on the window). Every file must carry NVIDIA's valid digital signature. Kestrel says plainly that the newest driver isn't always the best one.
+- **Read from the driver itself:** Kestrel unpacks the package with Windows' own tar and reads NVIDIA's component manifests, including what each component requires. Dependencies come from NVIDIA's own declarations, so newer drivers work without a Kestrel update. Components Kestrel doesn't know yet are kept. The package's device list confirms your card is supported before anything installs.
+- **Presets:**
+  - **Optimized Gaming** (default) leaves out the NVIDIA App, its container services, message bus and backend, ShadowPlay (overlay and recording), NVIDIA Virtual Audio, FrameView SDK and NVIDIA telemetry.
+  - **Competitive** also leaves out the deep-learning scaling model (DLDSR). It's honest that nothing more runs in the background than with Optimized Gaming.
+  - **Minimal** also leaves out PhysX and HDMI/DisplayPort audio.
+  - **Custom** lets you switch each component, with requirements kept automatically.
+  - Kept in every preset: the driver itself (NVIDIA Control Panel, DirectX, Vulkan, OpenGL, DLSS with Frame Generation and Ray Reconstruction, Reflex, Low Latency Mode, G-SYNC, NVENC/NVDEC, shader cache, per-game profiles), the Visual C++ runtime, and the hardware-specific USB-C and laptop power (NVPCF) drivers, which install only where that hardware exists.
+  - Each component shows its size, what it runs in the background, and what you lose without it. On driver 621.40, Optimized Gaming cuts the package from 3.9 GB to 3.3 GB.
+- **Nothing signed is changed:** left-out components are whole folders. setup.cfg loses only the three file references that pointed into the NVIDIA App folder (EULA, privacy policy, consent text), as NVCleanstall does. The driver's INF, catalog and binaries stay as NVIDIA signed them, so there are no test-signing or Secure Boot workarounds and anti-cheat sees a normal driver.
+- **Install or export:** install runs NVIDIA's own installer silently, with an optional clean installation (it resets Control Panel settings, so it's off by default). NVIDIA's OpenGL driver closes OpenGL programs such as Kestrel while the display driver restarts, so the installer runs from a small script that records the result and reopens Kestrel on the Driver Optimizer. Export saves the stripped package to a folder of your choice. "Delete Kestrel's temporary driver files" removes the download and unpacked files.
+- **After installing**, Kestrel checks and shows only measured results:
+  - the driver version and the driver file's signature;
+  - PhysX;
+  - telemetry services and tasks still present by name;
+  - NVIDIA services, scheduled tasks, processes, their memory and disk use, before and after.
+  - It also says the display driver's own container still reports some usage data. That's part of NVIDIA's signed driver and can't be removed without breaking the signature.
+- No FPS claims: leaving out the App removes background programs, not frame-time magic. Kestrel's only network traffic here is NVIDIA's driver lookup and download.
+- Tested end to end on an RTX 2070 SUPER with driver 621.40: lookup, signature check, unpacking, Optimized Gaming build, silent install, automatic reopen and verification.
+
 ## 0.26.0: NVIDIA per-game settings
 - **Two NVIDIA switches on each game's page (Games > the game > Game Mode):**
   - **Prefer maximum performance:** NVIDIA's Power management mode for just this game, so light or processor-heavy games don't stutter when the card clocks down. A small effect, and the card uses more power while you play; per game, so it doesn't stay at full speed on the desktop as the global setting would.

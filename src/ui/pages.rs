@@ -4,7 +4,7 @@
 use eframe::egui::{RichText, Ui};
 
 use super::components::*;
-use crate::app::state::{Page, ToolsTab};
+use crate::app::state::{GpuTab, Page, ToolsTab};
 use crate::app::App;
 use crate::system::open_uri;
 
@@ -16,11 +16,12 @@ impl App {
 
     pub(crate) fn gpu_page(&mut self, ui: &mut Ui) {
         page_header(ui, "GPU", "Graphics settings, and what Kestrel found about your graphics card and screen.");
-        self.settings_list(ui, Page::Gpu);
-        if crate::optimizer::nvidia::available() {
-            ui.add_space(S2);
-            caption(ui, "Per-game NVIDIA settings (Prefer maximum performance, Low latency mode) are on each game's page: Games > the game > Game Mode.");
+        pivot(ui, &mut self.gpu_tab, &[(GpuTab::Settings, "Settings"), (GpuTab::Driver, "Driver Optimizer")]);
+        if self.gpu_tab == GpuTab::Driver {
+            self.driver_optimizer(ui);
+            return;
         }
+        self.settings_list(ui, Page::Gpu);
         self.page_checks(
             ui,
             Some(&[

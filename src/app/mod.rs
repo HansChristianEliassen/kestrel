@@ -35,6 +35,8 @@ pub struct App {
     pub(crate) tools_tab: ToolsTab,
     pub(crate) sidebar_collapsed: bool,
     pub(crate) net: NetTestState,
+    pub(crate) gpu_tab: GpuTab,
+    pub(crate) driver: DriverState,
     pub(crate) gaming: GamingState,
     pub(crate) opt: OptState,
     pub(crate) gamemode: GameModeState,
@@ -86,6 +88,8 @@ impl App {
             tools_tab: ToolsTab::default(),
             sidebar_collapsed: false,
             net: NetTestState::default(),
+            gpu_tab: GpuTab::default(),
+            driver: DriverState::default(),
             clean: CleanTestState { active: crate::cleantest::active_counts(), ..Default::default() },
             gaming: GamingState::default(),
             opt: OptState::default(),
@@ -619,7 +623,9 @@ impl App {
                 .into_iter()
                 .filter(|t| {
                     (Preset::Performance.includes(*t)
-                        || matches!(t, Tweak::GpuScheduling | Tweak::DeliveryUploadOff | Tweak::NvShaderCache))
+                        || matches!(t, Tweak::GpuScheduling | Tweak::DeliveryUploadOff)
+                        // Full GPU clocks cost battery life: not offered on laptops.
+                        || (*t == Tweak::NvShaderCache && !crate::optimizer::hardware::has_battery()))
                         && t.unsupported(build).is_none()
                 })
                 .collect();
@@ -689,6 +695,7 @@ impl App {
                 lines.extend(crate::optimizer::profiles::undo());
                 lines.extend(gaming::restore_all_games());
                 lines.extend(health::restore_displays());
+                lines.extend(crate::nvdriver::telemetry::restore());
             }
             if lines.is_empty() {
                 lines.push("There were no saved settings to restore.".into());
@@ -742,6 +749,7 @@ impl App {
             Action::UpdateApps(apps) => self.start_app_queue(ctx, apps, false),
             Action::InstallApps(apps) => self.start_app_queue(ctx, apps, true),
             Action::ApplyProfile(items) => self.profile.apply.start(ctx, move || crate::optimizer::profiles::apply(&items)),
+            Action::InstallNvDriver => self.start_driver_install(ctx),
             Action::InstallDrivers(drivers) => {
                 let ids: Vec<String> = drivers.iter().map(|d| d.id.clone()).collect();
                 self.upgrades.drivers_selected.clear();
@@ -1178,7 +1186,20 @@ impl eframe::App for App {
                     self.gaming.windows_tab = WindowsTab::Services;
                     self.go(Page::Windows, ctx);
                 }
+                "driver" => {
+                    self.gpu_tab = GpuTab::Driver;
+                    self.go(Page::Gpu, ctx);
+                }
                 _ => {}
+            }
+        }
+        // A driver install that finished while Kestrel was closed (NVIDIA's OpenGL driver closes it mid-install).
+        if !self.driver.pending_checked {
+            self.driver.pending_checked = true;
+            if let Some(p) = crate::nvdriver::install::take_pending() {
+                self.gpu_tab = GpuTab::Driver;
+                self.go(Page::Gpu, ctx);
+                self.driver_check(ctx, p);
             }
         }
         self.poll(ctx);

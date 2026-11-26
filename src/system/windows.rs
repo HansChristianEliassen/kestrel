@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use windows::core::{w, PCWSTR};
+use windows::core::{w, HSTRING, PCWSTR};
 use windows::Win32::Foundation::WAIT_TIMEOUT;
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, WPARAM};
 use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
@@ -96,6 +96,16 @@ pub fn service_running(name: &str) -> bool {
 /// Launches `file` through the shell (UAC prompts are handled by Windows).
 /// With `wait`, waits for it to exit (or for the flag to be set) and returns the exit code.
 pub fn shell_execute(file: &str, params: &str, elevate: bool, wait: Option<&AtomicBool>) -> Result<u32, String> {
+    launch(file, params, elevate, wait, true)
+}
+
+/// `shell_execute` without a window (for console tools and scripts).
+pub fn shell_execute_hidden(file: &str, params: &str, elevate: bool, wait: Option<&AtomicBool>) -> Result<u32, String> {
+    launch(file, params, elevate, wait, false)
+}
+
+fn launch(file: &str, params: &str, elevate: bool, wait: Option<&AtomicBool>, show: bool) -> Result<u32, String> {
+    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
     let (f, p) = (wide(file), wide(params));
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
@@ -103,7 +113,7 @@ pub fn shell_execute(file: &str, params: &str, elevate: bool, wait: Option<&Atom
         lpVerb: if elevate { w!("runas") } else { w!("open") },
         lpFile: PCWSTR(f.as_ptr()),
         lpParameters: PCWSTR(p.as_ptr()),
-        nShow: SW_SHOWNORMAL.0,
+        nShow: if show { SW_SHOWNORMAL.0 } else { SW_HIDE.0 },
         ..Default::default()
     };
     unsafe { ShellExecuteExW(&mut info) }.map_err(|e| e.message().to_string())?;
@@ -144,16 +154,29 @@ pub fn shortcut_target(lnk: &str) -> Option<String> {
 }
 
 /// Windows' own Open dialog, filtered to programs. Blocks until the user picks a file or cancels.
-pub fn pick_exe() -> Option<String> {
+pub fn pick_exe(title: &str) -> Option<String> {
+    pick(title, false)
+}
+
+/// Windows' own folder picker. Blocks until the user picks a folder or cancels.
+pub fn pick_folder(title: &str) -> Option<String> {
+    pick(title, true)
+}
+
+fn pick(title: &str, folder: bool) -> Option<String> {
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
     use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
-    use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, SIGDN_FILESYSPATH};
+    use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, FOS_PICKFOLDERS, SIGDN_FILESYSPATH};
     unsafe {
         // The UI thread may already have COM set up; that's fine either way.
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
-        dialog.SetFileTypes(&[COMDLG_FILTERSPEC { pszName: w!("Programs"), pszSpec: w!("*.exe") }]).ok()?;
-        dialog.SetTitle(w!("Choose the game's .exe")).ok()?;
+        if folder {
+            dialog.SetOptions(dialog.GetOptions().ok()? | FOS_PICKFOLDERS).ok()?;
+        } else {
+            dialog.SetFileTypes(&[COMDLG_FILTERSPEC { pszName: w!("Programs"), pszSpec: w!("*.exe") }]).ok()?;
+        }
+        dialog.SetTitle(&HSTRING::from(title)).ok()?;
         dialog.Show(None).ok()?; // cancelled
         let path = dialog.GetResult().ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
         let s = path.to_string().ok();

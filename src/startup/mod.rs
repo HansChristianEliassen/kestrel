@@ -3,7 +3,7 @@ pub mod manager;
 mod tasks;
 
 pub use manager::{exe_name, list, restore_all, set_enabled, StartupEntry};
-pub use tasks::{enabled_task_count, is_enabled as task_enabled, put_back as put_task_back, set_enabled as set_task_enabled};
+pub use tasks::{enabled_task_count, find_tasks, is_enabled as task_enabled, put_back as put_task_back, set_enabled as set_task_enabled};
 
 /// Common apps that start with Windows and keep running in the background, but don't need to for gaming.
 /// (pattern matched in the lower-case name or command, ticked by default, why). Turning one off is the same

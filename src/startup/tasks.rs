@@ -112,6 +112,37 @@ pub fn enabled_task_count() -> usize {
     service().and_then(|s| unsafe { s.GetFolder(&BSTR::from("\\")) }.map_err(|e| e.message())).map_or(0, |root| count(&root))
 }
 
+/// (path, enabled) of every scheduled task whose path matches `pred` (lower-case), Windows' folders included.
+pub fn find_tasks(pred: impl Fn(&str) -> bool) -> Vec<(String, bool)> {
+    fn walk(folder: &ITaskFolder, pred: &dyn Fn(&str) -> bool, out: &mut Vec<(String, bool)>) {
+        unsafe {
+            if let Ok(ts) = folder.GetTasks(TASK_ENUM_HIDDEN.0) {
+                for i in 1..=ts.Count().unwrap_or(0) {
+                    let Ok(t) = ts.get_Item(&VARIANT::from(i)) else { continue };
+                    if let (Ok(path), Ok(on)) = (t.Path(), t.Enabled()) {
+                        let path = path.to_string();
+                        if pred(&path.to_lowercase()) {
+                            out.push((path, on.as_bool()));
+                        }
+                    }
+                }
+            }
+            if let Ok(fs) = folder.GetFolders(0) {
+                for i in 1..=fs.Count().unwrap_or(0) {
+                    if let Ok(f) = fs.get_Item(&VARIANT::from(i)) {
+                        walk(&f, pred, out);
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if let Ok(root) = service().and_then(|s| unsafe { s.GetFolder(&BSTR::from("\\")) }.map_err(|e| e.message())) {
+        walk(&root, &pred, &mut out);
+    }
+    out
+}
+
 /// Puts a task back to a saved state. Nothing to do when it's already there or the task no longer exists, so a
 /// saved original that was never actually changed doesn't fail every restore.
 pub fn put_back(path: &str, on: bool) -> Result<(), String> {

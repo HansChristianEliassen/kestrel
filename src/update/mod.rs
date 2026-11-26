@@ -10,7 +10,7 @@
 //! verified one takes its name, and the new version starts once this one has closed. Nothing is elevated.
 
 pub mod crypto;
-mod http;
+pub mod http;
 
 use std::fs;
 use std::path::{Path, PathBuf};

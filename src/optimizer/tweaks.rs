@@ -157,7 +157,7 @@ impl Tweak {
         }
     }
 
-    fn key(self) -> &'static str {
+    pub(crate) fn key(self) -> &'static str {
         match self {
             Tweak::PowerMode => "power_mode",
             Tweak::GameMode => "game_mode",
@@ -267,10 +267,10 @@ impl Tweak {
                 "Lowers protection against malicious drivers. Some anti-cheat systems and company PCs require it on. Needs a restart.",
             ),
             Tweak::NvShaderCache => (
-                "Bigger NVIDIA shader cache (10 GB)",
-                "Games compile shaders (small graphics programs) the first time they need them, and the NVIDIA driver keeps them in a cache on disk. When the cache is full, it throws old ones away and games compile them again, which causes stutter. This raises the cache to 10 GB (NVIDIA Control Panel > Manage 3D settings > Shader Cache Size). A bigger size you already set is kept.",
-                "Fewer hitches when games load new areas or effects, especially in large games.",
-                "Uses up to 10 GB of disk space over time.",
+                "NVIDIA gaming profile",
+                "One profile in the driver's global settings (NVIDIA Control Panel > Manage 3D settings), for every game: Power management mode Prefer maximum performance, Low Latency Mode On, Shader Cache Size 10 GB (a bigger size you set is kept), and on RTX 40 and 50 cards the latest DLSS model. On RTX 20 and 30 cards DLSS is left alone, since the newest model costs FPS there.",
+                "No downclocking mid-game, less input lag in DirectX 11 games when the graphics card is the limit, fewer shader-compile hitches, and a sharper DLSS image at no cost on new cards.",
+                "The graphics card may stay at higher clocks on the desktop too, using more power and running warmer. Uses up to 10 GB of disk for shaders. Games with NVIDIA Reflex use Reflex instead of Low Latency Mode.",
             ),
             Tweak::ServiceGrouping => (
                 "Group Windows services into fewer processes",
@@ -396,7 +396,7 @@ impl Tweak {
             Tweak::NoMouseAccel => get_mouse()?.map(|v| v.to_string()).join(","),
             Tweak::WindowedGames => read_sz(DX_PREFS, DX_GLOBAL).unwrap_or_else(|| "-".into()),
             Tweak::UsbSuspendOff => usb_suspend()?.to_string(),
-            Tweak::NvShaderCache => super::nvidia::shader_cache()?.to_string(),
+            Tweak::NvShaderCache => super::nvidia::profile_snapshot()?,
             Tweak::ServiceGrouping => {
                 read_dword_in(Hive::Machine, SVCHOST_CONTROL, SVCHOST_THRESHOLD).map_or("-".to_string(), |v| v.to_string())
             }
@@ -475,13 +475,10 @@ impl Tweak {
                 };
                 write_dword_in(Hive::Machine, SVCHOST_CONTROL, SVCHOST_THRESHOLD, value)
             }
-            Tweak::NvShaderCache => {
-                let mb = match saved {
-                    Some(s) => s.parse::<u32>().map_err(|_| "Saved value is invalid.".to_string())?,
-                    None => super::nvidia::SHADER_CACHE_TARGET_MB,
-                };
-                super::nvidia::set_shader_cache(mb)
-            }
+            Tweak::NvShaderCache => match saved {
+                Some(s) => super::nvidia::restore_profile(s),
+                None => super::nvidia::apply_profile(),
+            },
             _ => {
                 write_registry(self.hive(), self.registry(), saved)?;
                 if self == Tweak::NoTransparency {
@@ -502,8 +499,8 @@ impl Tweak {
             Tweak::NoMouseAccel => get_mouse().is_ok_and(|m| m[2] == 0),
             Tweak::WindowedGames => read_sz(DX_PREFS, DX_GLOBAL).is_some_and(|s| get_kv(&s, "SwapEffectUpgradeEnable") == Some("1")),
             Tweak::UsbSuspendOff => usb_suspend().is_ok_and(|v| v == 0),
-            // Only ever raised: a bigger cache (or unlimited) already counts.
-            Tweak::NvShaderCache => super::nvidia::shader_cache().is_ok_and(|mb| mb >= super::nvidia::SHADER_CACHE_TARGET_MB),
+            // The shader cache is only ever raised: a bigger one (or unlimited) already counts.
+            Tweak::NvShaderCache => super::nvidia::profile_applied(),
             // AtlasOS groups service by service instead (SvcHostSplitDisable); that counts too.
             Tweak::ServiceGrouping => {
                 read_dword_in(Hive::Machine, SVCHOST_CONTROL, SVCHOST_THRESHOLD).is_some_and(|t| u64::from(t) > installed_kb())

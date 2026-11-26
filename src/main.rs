@@ -5,6 +5,7 @@ mod cleaner;
 mod cleantest;
 mod gamemode;
 mod logo;
+mod nvdriver;
 mod optimizer;
 mod services;
 mod startup;

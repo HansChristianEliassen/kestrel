@@ -34,6 +34,11 @@ const EXECUTABLE_NOT_FOUND: Status = -166;
 pub const POWER_MODE: u32 = 0x1057_EB71;
 /// "Maximum pre-rendered frames", shown as Low Latency Mode; 1 = On (default 0, the game decides).
 pub const PRERENDER_LIMIT: u32 = 0x007B_A09E;
+/// "Enable DLSS-SR override" (1 = on) and "Override DLSS-SR presets" (0x00FFFFFF = the latest model), the
+/// settings behind the NVIDIA App's DLSS Override.
+pub const DLSS_SR_OVERRIDE: u32 = 0x10E4_1E01;
+pub const DLSS_SR_PRESET: u32 = 0x10E4_1DF3;
+pub const DLSS_PRESET_LATEST: u32 = 0x00FF_FFFF;
 /// Profiles Kestrel creates for games NVIDIA has none for start with this, so Undo can remove them again.
 const OWN_PROFILE: &str = "Kestrel: ";
 
@@ -171,12 +176,6 @@ impl Drs {
         }
     }
 
-    /// Sets a 32-bit setting in the global profile and saves it (needs administrator rights).
-    fn set(&self, id: u32, value: u32) -> Result<(), String> {
-        self.set_in(self.base_profile()?, id, value)?;
-        self.save()
-    }
-
     fn set_in(&self, profile: Handle, id: u32, value: u32) -> Result<(), String> {
         unsafe {
             let set: unsafe extern "C" fn(Handle, Handle, *mut Setting) -> Status = self.func(DRS_SET_SETTING)?;
@@ -287,14 +286,96 @@ pub fn shader_cache() -> Result<u32, String> {
     Drs::open()?.get(SHADER_CACHE_SIZE)
 }
 
-pub fn set_shader_cache(mb: u32) -> Result<(), String> {
-    Drs::open()?.set(SHADER_CACHE_SIZE, mb)
-}
-
 /// Whether this PC has an NVIDIA driver with the settings API (checked once).
 pub fn available() -> bool {
     static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *AVAILABLE.get_or_init(|| Drs::open().is_ok())
+}
+
+/// Whether the card is an RTX 40 series or newer, where the newest DLSS model costs next to no FPS (on RTX 20
+/// and 30 cards it costs a few percent, so the gaming profile leaves DLSS alone there). Checked once.
+pub fn dlss_model_is_free() -> bool {
+    static NEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *NEW.get_or_init(|| crate::nvdriver::detect().is_some_and(|g| rtx_series(&g.name).is_some_and(|s| s >= 40)))
+}
+
+/// 20, 30, 40, 50… from a name like "NVIDIA GeForce RTX 4070 Ti SUPER".
+fn rtx_series(name: &str) -> Option<u32> {
+    let model = name.split("RTX ").nth(1)?.split(|c: char| !c.is_ascii_digit()).next()?;
+    (model.len() == 4).then(|| model[..2].parse().ok()).flatten()
+}
+
+/// The global settings Kestrel's NVIDIA gaming profile manages, in the order its saved original lists them.
+const PROFILE: [u32; 5] = [SHADER_CACHE_SIZE, POWER_MODE, PRERENDER_LIMIT, DLSS_SR_OVERRIDE, DLSS_SR_PRESET];
+
+/// The global profile's own values of these settings (None where it doesn't set one).
+fn global(ids: &[u32]) -> Result<Vec<Option<u32>>, String> {
+    let drs = Drs::open()?;
+    let base = drs.base_profile()?;
+    ids.iter().map(|id| drs.get_in(base, *id)).collect()
+}
+
+/// Sets (Some) or clears (None) global settings in one session, then saves.
+fn set_global(values: &[(u32, Option<u32>)]) -> Result<(), String> {
+    let drs = Drs::open()?;
+    let base = drs.base_profile()?;
+    for (id, v) in values {
+        match v {
+            Some(v) => drs.set_in(base, *id, *v)?,
+            None => drs.clear_in(base, *id)?,
+        }
+    }
+    drs.save()
+}
+
+/// What the gaming profile sets, given the current shader cache size (a bigger one, or unlimited, is kept).
+fn profile_values(cache_now: Option<u32>) -> Vec<(u32, Option<u32>)> {
+    let mut v = vec![
+        (SHADER_CACHE_SIZE, Some(cache_now.unwrap_or(0).max(SHADER_CACHE_TARGET_MB))),
+        // Prefer maximum performance; Low Latency Mode On.
+        (POWER_MODE, Some(1)),
+        (PRERENDER_LIMIT, Some(1)),
+    ];
+    if dlss_model_is_free() {
+        v.extend([(DLSS_SR_OVERRIDE, Some(1)), (DLSS_SR_PRESET, Some(DLSS_PRESET_LATEST))]);
+    }
+    v
+}
+
+/// The profile's settings as they are now, for the saved original: comma-separated, "-" where unset.
+pub fn profile_snapshot() -> Result<String, String> {
+    Ok(global(&PROFILE)?.iter().map(|v| v.map_or("-".into(), |v| v.to_string())).collect::<Vec<_>>().join(","))
+}
+
+pub fn apply_profile() -> Result<(), String> {
+    let cache = global(&[SHADER_CACHE_SIZE])?[0];
+    set_global(&profile_values(cache))
+}
+
+/// Puts a saved original back. A plain number is an original saved by versions before 0.28, which only
+/// changed the shader cache.
+pub fn restore_profile(saved: &str) -> Result<(), String> {
+    if !saved.contains(',') {
+        let mb = saved.parse::<u32>().map_err(|_| "Saved value is invalid.".to_string())?;
+        return set_global(&[(SHADER_CACHE_SIZE, Some(mb))]);
+    }
+    let parts: Vec<&str> = saved.split(',').collect();
+    let values: Result<Vec<(u32, Option<u32>)>, String> = PROFILE
+        .iter()
+        .zip(parts.iter().chain(std::iter::repeat(&"-")))
+        .map(|(id, p)| match *p {
+            "-" => Ok((*id, None)),
+            p => p.parse::<u32>().map(|v| (*id, Some(v))).map_err(|_| "Saved value is invalid.".to_string()),
+        })
+        .collect();
+    set_global(&values?)
+}
+
+pub fn profile_applied() -> bool {
+    let Ok(now) = global(&PROFILE) else { return false };
+    let want = profile_values(now[0]);
+    now[0].is_some_and(|mb| mb >= SHADER_CACHE_TARGET_MB)
+        && want.iter().skip(1).all(|(id, v)| PROFILE.iter().position(|p| p == id).is_some_and(|i| now[i] == *v))
 }
 
 /// The game's own value for a driver setting (None: not set for it, so the global setting applies).
@@ -344,6 +425,29 @@ pub fn set_app_setting(exe: &str, id: u32, value: Option<u32>) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "applies the NVIDIA gaming profile to this PC's global driver settings and puts the originals back"]
+    fn live_profile_round_trip() {
+        let before = profile_snapshot().unwrap();
+        println!("before: {before} (applied: {})", profile_applied());
+        apply_profile().unwrap();
+        let during = profile_snapshot().unwrap();
+        println!("during: {during} (applied: {})", profile_applied());
+        assert!(profile_applied());
+        restore_profile(&before).unwrap();
+        assert_eq!(profile_snapshot().unwrap(), before, "originals back exactly");
+        println!("restored: {before}");
+    }
+
+    #[test]
+    fn rtx_series_from_names() {
+        assert_eq!(rtx_series("NVIDIA GeForce RTX 2070 SUPER"), Some(20));
+        assert_eq!(rtx_series("NVIDIA GeForce RTX 4070 Ti SUPER"), Some(40));
+        assert_eq!(rtx_series("NVIDIA GeForce RTX 5090 D"), Some(50));
+        assert_eq!(rtx_series("NVIDIA GeForce GTX 1080"), None);
+        assert_eq!(rtx_series("NVIDIA RTX A4000"), None);
+    }
 
     #[test]
     fn names_round_trip() {

@@ -119,6 +119,10 @@ impl App {
         group(ui, |ui| {
             for (n, s) in GameSetting::ALL.into_iter().enumerate() {
                 let (on, by_kestrel) = game.status[n];
+                // NVIDIA settings now come from the one global NVIDIA gaming profile (GPU page).
+                if s.is_nvidia() && !on {
+                    continue;
+                }
                 let mut want = on;
                 let why = s.unsupported(build);
                 let mut desc = why.unwrap_or(s.desc()).to_string();

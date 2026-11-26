@@ -104,7 +104,7 @@ impl App {
         let mut browse = false;
         section(ui, "Games", |ui| browse = link(ui, "Browse for a game…").clicked());
         if browse {
-            if let Some(exe) = pick_exe() {
+            if let Some(exe) = pick_exe("Choose the game's .exe") {
                 self.add_game_mode_game(exe);
                 save = true;
             }

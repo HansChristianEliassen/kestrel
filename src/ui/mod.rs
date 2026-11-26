@@ -3,6 +3,7 @@
 mod analysis;
 mod cleantest;
 pub mod components;
+mod driver;
 mod game_settings;
 mod gamemode;
 mod games;
@@ -1266,7 +1267,7 @@ impl App {
             self.load_games(ui.ctx());
         }
         if add {
-            if let Some(exe) = pick_exe() {
+            if let Some(exe) = pick_exe("Choose the game's .exe") {
                 let g = &mut self.gaming;
                 match g.games.iter().position(|x| x.exes.iter().any(|e| e.eq_ignore_ascii_case(&exe))) {
                     Some(i) => g.game_search = g.games[i].name.clone(),

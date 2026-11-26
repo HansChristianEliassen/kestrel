@@ -87,6 +87,59 @@ pub enum WindowsTab {
     Privacy,
 }
 
+/// Tabs of the GPU page.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum GpuTab {
+    #[default]
+    Settings,
+    Driver,
+}
+
+/// GPU > Driver Optimizer.
+#[derive(Default)]
+pub struct DriverState {
+    /// The NVIDIA card, looked up once (None inside: no NVIDIA card).
+    pub gpu: Option<Option<crate::nvdriver::Gpu>>,
+    pub studio: bool,
+    pub releases: Job<Result<Vec<crate::nvdriver::Release>, String>>,
+    pub list: Option<Result<Vec<crate::nvdriver::Release>, String>>,
+    pub chosen: usize,
+    /// Download progress and cancel, shared with the worker.
+    pub progress: std::sync::Arc<crate::nvdriver::Progress>,
+    /// What the current worker is doing.
+    pub stage: std::sync::Arc<std::sync::Mutex<String>>,
+    /// Download or import, then signature check, unpack and analysis.
+    pub prepare: Job<Result<crate::nvdriver::Prepared, String>>,
+    pub ready: Option<crate::nvdriver::Prepared>,
+    pub error: Option<String>,
+    pub preset: crate::nvdriver::package::Preset,
+    pub keep: std::collections::BTreeSet<String>,
+    pub clean: bool,
+    /// Build and install: (installer exit code, folders left out).
+    pub install: Job<Result<Option<crate::nvdriver::install::Pending>, String>>,
+    /// Install options, both on unless switched off.
+    pub no_block: bool,
+    pub no_profile: bool,
+    /// Set when the confirmed install is a rollback to this kept version.
+    pub rollback: Option<String>,
+    /// Telemetry block: live status, and changing it.
+    pub tele: Job<crate::nvdriver::telemetry::Status>,
+    pub tele_now: Option<crate::nvdriver::telemetry::Status>,
+    pub tele_set: Job<Result<(), String>>,
+    /// Packages kept for rollback: (version, folder, bytes).
+    pub kept: Job<Vec<(String, std::path::PathBuf, u64)>>,
+    pub kept_now: Option<Vec<(String, std::path::PathBuf, u64)>>,
+    /// Build into a chosen folder.
+    pub export: Job<Result<std::path::PathBuf, String>>,
+    pub verify: Job<Vec<crate::nvdriver::install::CheckLine>>,
+    /// What the last install or export came to.
+    pub outcome: Option<Result<String, String>>,
+    pub checks: Vec<crate::nvdriver::install::CheckLine>,
+    pub cleaning: Job<Result<(), String>>,
+    /// Checked once at start for an install that finished while Kestrel was closed.
+    pub pending_checked: bool,
+}
+
 /// Tabs of the Tools page.
 #[derive(Clone, Copy, PartialEq, Default)]
 pub enum ToolsTab {
@@ -153,6 +206,8 @@ pub enum Action {
     InstallDrivers(Vec<DriverUpdate>),
     /// Windows > Performance: the profile items to apply.
     ApplyProfile(Vec<crate::optimizer::profiles::Item>),
+    /// GPU > Driver Optimizer: build the stripped package and install it.
+    InstallNvDriver,
 }
 
 pub struct Confirm {

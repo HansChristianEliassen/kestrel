@@ -13,7 +13,7 @@ use winreg::RegKey;
 use super::gaming::{configured, GameSetting};
 use crate::cleaner::scanner::REPARSE_POINT;
 use crate::system::env_path;
-use crate::utils::backup;
+use crate::utils::{backup, json_str};
 
 pub struct Game {
     pub name: String,
@@ -134,30 +134,6 @@ fn vdf_values(text: &str, key: &str) -> Vec<String> {
             (tokens.len() >= 2 && tokens[0].eq_ignore_ascii_case(key)).then(|| tokens[1].replace("\\\\", "\\"))
         })
         .collect()
-}
-
-/// String value for `key` in a flat JSON object (Epic manifests).
-fn json_str(text: &str, key: &str) -> Option<String> {
-    let start = text.find(&format!("\"{key}\""))? + key.len() + 2;
-    let rest = text[start..].trim_start().strip_prefix(':')?.trim_start().strip_prefix('"')?;
-    let mut out = String::new();
-    let mut chars = rest.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '"' => return Some(out),
-            '\\' => match chars.next()? {
-                'n' => out.push('\n'),
-                't' => out.push('\t'),
-                'u' => {
-                    let hex: String = chars.by_ref().take(4).collect();
-                    out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
-                }
-                other => out.push(other),
-            },
-            c => out.push(c),
-        }
-    }
-    None
 }
 
 fn steam(out: &mut Vec<Game>, locate: Locate) {

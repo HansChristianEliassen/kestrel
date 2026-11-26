@@ -76,14 +76,21 @@ pub enum GameSetting {
 impl GameSetting {
     pub const ALL: [GameSetting; 5] =
         [GameSetting::HighPerfGpu, GameSetting::FsoOff, GameSetting::WindowedOptOff, GameSetting::NvMaxPerf, GameSetting::NvLowLatency];
+    /// Per-game NVIDIA settings from 0.26. Replaced by the global NVIDIA gaming profile; a game page shows them only
+    /// while they're on, so they can still be turned off.
+    pub const NVIDIA: [GameSetting; 2] = [GameSetting::NvMaxPerf, GameSetting::NvLowLatency];
 
-    /// The NVIDIA driver setting behind it, for the NVIDIA ones.
-    fn nv_id(self) -> Option<u32> {
+    /// The NVIDIA driver settings behind it, with the values it sets (empty for Windows' own settings).
+    fn nv(self) -> &'static [(u32, u32)] {
         match self {
-            GameSetting::NvMaxPerf => Some(nvidia::POWER_MODE),
-            GameSetting::NvLowLatency => Some(nvidia::PRERENDER_LIMIT),
-            _ => None,
+            GameSetting::NvMaxPerf => &[(nvidia::POWER_MODE, 1)],
+            GameSetting::NvLowLatency => &[(nvidia::PRERENDER_LIMIT, 1)],
+            _ => &[],
         }
+    }
+
+    pub fn is_nvidia(self) -> bool {
+        !self.nv().is_empty()
     }
 
     pub fn label(self) -> &'static str {
@@ -119,7 +126,7 @@ impl GameSetting {
     pub fn unsupported(self, build: u32) -> Option<&'static str> {
         match self {
             GameSetting::WindowedOptOff if build < 22000 => Some("Windows 11 only."),
-            GameSetting::NvMaxPerf | GameSetting::NvLowLatency if !nvidia::available() => Some("Needs an NVIDIA graphics card and driver."),
+            s if s.is_nvidia() && !nvidia::available() => Some("Needs an NVIDIA graphics card and driver."),
             _ => None,
         }
     }
@@ -155,8 +162,14 @@ impl GameSetting {
 
     /// Current raw value: the DirectX preference entry, or "1" when the compatibility flag is set.
     fn read(self, exe: &str) -> Option<String> {
-        if let Some(id) = self.nv_id() {
-            return nvidia::app_setting(exe, id).ok().flatten().map(|v| v.to_string());
+        if self.is_nvidia() {
+            // The game's own value per driver setting, "-" where it has none; None when it has none at all.
+            let values: Vec<String> = self
+                .nv()
+                .iter()
+                .map(|(id, _)| nvidia::app_setting(exe, *id).ok().flatten().map_or("-".into(), |v| v.to_string()))
+                .collect();
+            return values.iter().any(|v| v != "-").then(|| values.join(","));
         }
         match self {
             GameSetting::FsoOff => read_sz(LAYERS, exe).filter(|v| has_flag(v)).map(|_| "1".into()),
@@ -166,9 +179,16 @@ impl GameSetting {
 
     /// Writes a raw value (`None` = Windows default), leaving the program's other settings alone.
     fn write(self, exe: &str, value: Option<&str>) -> Result<(), String> {
-        if let Some(id) = self.nv_id() {
-            let value = value.map(|v| v.parse::<u32>().map_err(|_| "Saved value is invalid.".to_string())).transpose()?;
-            return nvidia::set_app_setting(exe, id, value);
+        if self.is_nvidia() {
+            let parts: Vec<&str> = value.map_or_else(Vec::new, |v| v.split(',').collect());
+            for (i, (id, _)) in self.nv().iter().enumerate() {
+                let v = match parts.get(i) {
+                    None | Some(&"-") => None,
+                    Some(p) => Some(p.parse::<u32>().map_err(|_| "Saved value is invalid.".to_string())?),
+                };
+                nvidia::set_app_setting(exe, *id, v)?;
+            }
+            return Ok(());
         }
         match self {
             GameSetting::FsoOff => {
@@ -221,13 +241,41 @@ pub fn configured() -> BTreeSet<String> {
         let Ok(k) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(key) else { continue };
         for (exe, _) in k.enum_values().flatten() {
             if exe.to_ascii_lowercase().ends_with(".exe")
-                && GameSetting::ALL.iter().any(|s| s.nv_id().is_none() && s.read(&exe).as_deref() == Some(s.target()))
+                && GameSetting::ALL.iter().any(|s| !s.is_nvidia() && s.read(&exe).as_deref() == Some(s.target()))
             {
                 out.insert(exe);
             }
         }
     }
     out
+}
+
+/// After a driver install: turns Kestrel's NVIDIA settings back on where the install reset them (a clean
+/// installation clears every driver profile). Only settings Kestrel changed (they have a saved original), so a
+/// value the user changed since is respected. One line per setting put back.
+pub fn reapply_nvidia() -> Vec<String> {
+    let mut lines = Vec::new();
+    for s in GameSetting::NVIDIA {
+        for (exe, _) in backup::with_prefix(&s.backup_key("")) {
+            if s.read(&exe).as_deref() == Some(s.target()) {
+                continue;
+            }
+            lines.push(match s.write(&exe, Some(s.target())) {
+                Ok(()) => {
+                    format!("✔ {} for {}", s.label(), Path::new(&exe).file_name().map_or(exe.clone(), |f| f.to_string_lossy().into_owned()))
+                }
+                Err(e) => format!("✖ {} for {exe}: {e}", s.label()),
+            });
+        }
+    }
+    let cache = Tweak::NvShaderCache;
+    if backup::get(cache.key()).is_some() && !cache.is_applied() {
+        lines.push(match cache.apply() {
+            Ok(()) => format!("✔ {}", cache.info().title),
+            Err(e) => format!("✖ {}: {e}", cache.info().title),
+        });
+    }
+    lines
 }
 
 /// Puts back the original per-game values Kestrel changed. One line per setting.
@@ -248,6 +296,14 @@ pub fn restore_all_games() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nvidia_targets_match_their_settings() {
+        for s in GameSetting::NVIDIA {
+            let joined: Vec<String> = s.nv().iter().map(|(_, v)| v.to_string()).collect();
+            assert_eq!(s.target(), joined.join(","), "{s:?}");
+        }
+    }
 
     #[test]
     fn flags_round_trip() {

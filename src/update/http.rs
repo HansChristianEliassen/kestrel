@@ -1,7 +1,8 @@
 //! Minimal HTTPS GET through WinHTTP (Windows' own HTTP stack: system proxy, TLS and certificate checks).
 
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use windows::core::{w, HSTRING, PCWSTR};
 use windows::Win32::Networking::WinHttp::{
@@ -41,7 +42,7 @@ struct Response {
 fn get(url: &str, follow: bool) -> Result<Response, String> {
     let rest = url.strip_prefix("https://").ok_or("Only https:// addresses are allowed.")?;
     let (host, path) = rest.split_once('/').map_or((rest, "/".to_string()), |(h, p)| (h, format!("/{p}")));
-    let ua = HSTRING::from(format!("Kestrel/{} (update check)", env!("CARGO_PKG_VERSION")));
+    let ua = HSTRING::from(format!("Kestrel/{}", env!("CARGO_PKG_VERSION")));
     unsafe {
         let session = handle(WinHttpOpen(&ua, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, PCWSTR::null(), PCWSTR::null(), 0), "Network")?;
         // Resolve, connect, send: 15 s each; receive: 30 s between packets, so a stalled download fails instead of hanging.
@@ -144,4 +145,67 @@ pub fn download(url: &str, max: u64, done: &AtomicU64, total: &AtomicU64) -> Res
         return Err("The download was interrupted before it finished.".into());
     }
     Ok(body)
+}
+
+/// A small text response (lookups), refusing anything over `max` bytes.
+pub fn get_text(url: &str, max: u64) -> Result<String, String> {
+    let r = get(url, true)?;
+    if r.status != 200 {
+        return Err(format!("The server answered with status {}.", r.status));
+    }
+    let mut body = Vec::new();
+    let mut chunk = vec![0u8; 64 * 1024];
+    loop {
+        let mut read = 0u32;
+        unsafe { WinHttpReadData(r.request.0, chunk.as_mut_ptr() as *mut c_void, chunk.len() as u32, &mut read) }
+            .map_err(|e| format!("The answer was interrupted. ({})", e.message().trim()))?;
+        if read == 0 {
+            break;
+        }
+        body.extend_from_slice(&chunk[..read as usize]);
+        if body.len() as u64 > max {
+            return Err("The answer was larger than expected.".into());
+        }
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
+/// Streams a large download into `path` (following https redirects); `cancel` stops it and removes the partial file.
+pub fn download_to(url: &str, path: &std::path::Path, done: &AtomicU64, total: &AtomicU64, cancel: &AtomicBool) -> Result<(), String> {
+    let r = get(url, true)?;
+    if r.status != 200 {
+        return Err(format!("The download server answered with status {}.", r.status));
+    }
+    // Content-Length as a 32-bit number only covers 4 GB, which is plenty for a driver.
+    let expected = number(&r.request, WINHTTP_QUERY_CONTENT_LENGTH).map(u64::from);
+    total.store(expected.unwrap_or(0), Ordering::Relaxed);
+    done.store(0, Ordering::Relaxed);
+    let result = (|| {
+        let mut file = std::io::BufWriter::new(std::fs::File::create(path).map_err(|e| format!("Couldn't create the file: {e}"))?);
+        let mut chunk = vec![0u8; 256 * 1024];
+        let mut got = 0u64;
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err("Download cancelled.".to_string());
+            }
+            let mut read = 0u32;
+            unsafe { WinHttpReadData(r.request.0, chunk.as_mut_ptr() as *mut c_void, chunk.len() as u32, &mut read) }
+                .map_err(|e| format!("The download was interrupted. ({})", e.message().trim()))?;
+            if read == 0 {
+                break;
+            }
+            file.write_all(&chunk[..read as usize]).map_err(|e| format!("Couldn't save the download: {e}"))?;
+            got += u64::from(read);
+            done.store(got, Ordering::Relaxed);
+        }
+        file.flush().map_err(|e| format!("Couldn't save the download: {e}"))?;
+        if expected.is_some_and(|n| n != got) {
+            return Err("The download was interrupted before it finished.".to_string());
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    result
 }

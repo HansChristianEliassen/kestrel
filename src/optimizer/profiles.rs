@@ -161,7 +161,8 @@ fn tweak_blocked(t: Tweak, hw: &Hardware, build: u32) -> Option<String> {
     if let Some(why) = t.unsupported(build) {
         return Some(why.into());
     }
-    if hw.battery && matches!(t, Tweak::UsbSuspendOff | Tweak::HighPerfPower) {
+    // The NVIDIA gaming profile keeps the graphics card at full clocks (Prefer maximum performance).
+    if hw.battery && matches!(t, Tweak::UsbSuspendOff | Tweak::HighPerfPower | Tweak::NvShaderCache) {
         return Some("Left out on a PC with a battery: it costs battery life.".into());
     }
     if t == Tweak::MemoryIntegrityOff && !hw.anticheat.is_empty() {
@@ -441,6 +442,7 @@ mod tests {
         let laptop = Hardware { battery: true, anticheat: vec![] };
         assert!(tweak_blocked(Tweak::UsbSuspendOff, &laptop, 26200).is_some());
         assert!(tweak_blocked(Tweak::HighPerfPower, &laptop, 26200).is_some());
+        assert!(tweak_blocked(Tweak::NvShaderCache, &laptop, 26200).is_some());
         let faceit = Hardware { battery: false, anticheat: vec!["FACEIT"] };
         assert!(tweak_blocked(Tweak::MemoryIntegrityOff, &faceit, 26200).unwrap().contains("FACEIT"));
     }

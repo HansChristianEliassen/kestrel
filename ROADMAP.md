@@ -14,11 +14,14 @@ Done so far:
 - 0.24 "Resizable BAR and MPO": a Resizable BAR check for supported cards and NVIDIA's MPO fix as an opt-in setting.
 - 0.25 "New layout": a flat HD OPTI-style sidebar with GPU, Network, Controller & input and Tools pages, a sidebar Game Mode switch, a status bar, and a network test (ping, jitter, loss to the router and the internet).
 - 0.26 "NVIDIA per-game settings": Prefer maximum performance and Low latency mode per game, in the game's NVIDIA driver profile.
+- 0.27 "Driver Optimizer": NVIDIA driver without the App, its services, overlay, recorder and telemetry, from NVIDIA's lookup or a file, read from NVIDIA's own manifests, installed silently and verified.
+- 0.28 "One NVIDIA gaming profile": one global driver profile instead of per-game settings, the driver's own telemetry blocked in the hosts file with a live check, and rollback to the previous stripped driver.
 
 Next releases:
-- 0.27 "Input test": mouse polling rate (Raw Input events per second while moving the mouse, and how steady they are) and controller packet rate (XInput) on Controller & input. Read-only.
-- 0.28 "More games": game-settings presets for Counter-Strike 2 and Cyberpunk 2077 (one calibration run each), RDR2 DLSS values once verified.
-- 0.29 "AMD": the same per-game switches for AMD cards through ADLX (Anti-Lag, Radeon Chill off) and AMD's shader cache.
+- 0.28 "Input test": mouse polling rate (Raw Input events per second while moving the mouse, and how steady they are) and controller packet rate (XInput) on Controller & input. Read-only.
+- 0.29 "More games": game-settings presets for Counter-Strike 2 and Cyberpunk 2077 (one calibration run each), RDR2 DLSS values once verified.
+- 0.30 "AMD": the same per-game switches for AMD cards through ADLX (Anti-Lag, Radeon Chill off) and AMD's shader cache.
+- Driver Optimizer follow-ups: laptop (notebook) packages tested on a laptop, Windows 10's older tar (falls back to 7-Zip when installed), and whether the NVIDIA Display Container can start on demand while the classic Control Panel keeps working (needs an administrator test).
 - Research first: per-game server ping on the Network page; a DPC latency check in Tools.
 - Skipped from HD OPTI: controller overclocking (hidusbf), forced MSI mode, NIC tuning, USB port check.
 
