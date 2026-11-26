@@ -49,6 +49,13 @@ pub enum Tweak {
     UpdatesOff,
     /// A fix for flicker or stutter, not a speed-up: Advanced only, never in a profile.
     MpoOff,
+    /// GPU > Max FPS: NVIDIA global settings that raise FPS at a cost. Opt-in, never in a profile.
+    NvRebar,
+    NvSmoothMotion,
+    NvDlssPerformance,
+    NvFrameGenMax,
+    NvTexturePerformance,
+    NvVsyncOff,
     // Privacy (Privacy page only; never in a preset).
     PrivacyAdId,
     PrivacyTailored,
@@ -67,7 +74,7 @@ pub struct Info {
 }
 
 impl Tweak {
-    pub const ALL: [Tweak; 24] = [
+    pub const ALL: [Tweak; 30] = [
         Tweak::GameMode,
         Tweak::GameDvrOff,
         Tweak::NoBackgroundApps,
@@ -85,6 +92,12 @@ impl Tweak {
         Tweak::ServiceGrouping,
         Tweak::UpdatesOff,
         Tweak::MpoOff,
+        Tweak::NvRebar,
+        Tweak::NvSmoothMotion,
+        Tweak::NvDlssPerformance,
+        Tweak::NvFrameGenMax,
+        Tweak::NvTexturePerformance,
+        Tweak::NvVsyncOff,
         Tweak::PrivacyAdId,
         Tweak::PrivacyTailored,
         Tweak::PrivacyLanguageList,
@@ -93,6 +106,20 @@ impl Tweak {
         Tweak::PrivacyInking,
         Tweak::PrivacySpeech,
     ];
+
+    /// The NVIDIA setting behind a Max FPS switch.
+    pub fn boost(self) -> Option<super::nvidia::Boost> {
+        use super::nvidia::Boost;
+        match self {
+            Tweak::NvRebar => Some(Boost::Rebar),
+            Tweak::NvSmoothMotion => Some(Boost::SmoothMotion),
+            Tweak::NvDlssPerformance => Some(Boost::DlssPerformance),
+            Tweak::NvFrameGenMax => Some(Boost::FrameGenMax),
+            Tweak::NvTexturePerformance => Some(Boost::TexturePerformance),
+            Tweak::NvVsyncOff => Some(Boost::VsyncOff),
+            _ => None,
+        }
+    }
 
     /// Shown on the Privacy page instead of Gaming.
     pub fn is_privacy(self) -> bool {
@@ -119,6 +146,9 @@ impl Tweak {
     /// Why this tweak has no effect on the given Windows build, if it doesn't.
     pub fn unsupported(self, build: u32) -> Option<&'static str> {
         const WIN11: u32 = 22000;
+        if let Some(b) = self.boost() {
+            return b.unavailable();
+        }
         match self {
             Tweak::WindowedGames if build < WIN11 => Some("Windows 11 only."),
             // Kept only so Revert can undo changes made by older versions.
@@ -153,7 +183,13 @@ impl Tweak {
             Tweak::GpuScheduling | Tweak::MemoryIntegrityOff | Tweak::ServiceGrouping | Tweak::MpoOff => {
                 Some("takes effect after a restart")
             }
-            Tweak::NvShaderCache => Some("takes effect the next time each game starts"),
+            Tweak::NvShaderCache
+            | Tweak::NvRebar
+            | Tweak::NvSmoothMotion
+            | Tweak::NvDlssPerformance
+            | Tweak::NvFrameGenMax
+            | Tweak::NvTexturePerformance
+            | Tweak::NvVsyncOff => Some("takes effect the next time each game starts"),
             _ => None,
         }
     }
@@ -177,6 +213,12 @@ impl Tweak {
             Tweak::ServiceGrouping => "service_grouping",
             Tweak::UpdatesOff => "updates_off",
             Tweak::MpoOff => "mpo_off",
+            Tweak::NvRebar => "nvidia_rebar",
+            Tweak::NvSmoothMotion => "nvidia_smooth_motion",
+            Tweak::NvDlssPerformance => "nvidia_dlss_performance",
+            Tweak::NvFrameGenMax => "nvidia_frame_gen_max",
+            Tweak::NvTexturePerformance => "nvidia_texture_performance",
+            Tweak::NvVsyncOff => "nvidia_vsync_off",
             Tweak::PrivacyAdId => "privacy_ad_id",
             Tweak::PrivacyTailored => "privacy_tailored",
             Tweak::PrivacyLanguageList => "privacy_language_list",
@@ -269,7 +311,7 @@ impl Tweak {
             ),
             Tweak::NvShaderCache => (
                 "NVIDIA gaming profile",
-                "One profile in the driver's global settings (NVIDIA Control Panel > Manage 3D settings), for every game: Power management mode Prefer maximum performance, Low Latency Mode On, Shader Cache Size 10 GB (a bigger size you set is kept), and on RTX 40 and 50 cards the latest DLSS model (RTX 20 and 30 cards keep their DLSS setting, since the newest model costs FPS there). With G-SYNC on for your main display it adds G-SYNC's lowest-latency setup: Vertical sync On and a frame rate cap a little under the refresh rate, as NVIDIA Reflex picks it.",
+                "One profile in the driver's global settings (NVIDIA Control Panel > Manage 3D settings), for every game: Power management mode Prefer maximum performance, Low Latency Mode On, Preferred refresh rate Highest available, Shader Cache Size 10 GB (a bigger size you set is kept), and on RTX 40 and 50 cards the latest DLSS model (RTX 20 and 30 cards keep their DLSS setting, since the newest model costs FPS there). With G-SYNC on for your main display it adds G-SYNC's lowest-latency setup: Vertical sync On and a frame rate cap a little under the refresh rate, as NVIDIA Reflex picks it.",
                 "No downclocking mid-game, less input lag in DirectX 11 games when the graphics card is the limit, fewer shader-compile hitches, and a sharper DLSS image at no cost on new cards.",
                 "The graphics card may stay at higher clocks on the desktop too, using more power and running warmer. Uses up to 10 GB of disk for shaders. With G-SYNC, FPS is capped just under the refresh rate, and games on a second, non-G-SYNC screen get VSync. Games with NVIDIA Reflex use Reflex instead of Low Latency Mode.",
             ),
@@ -290,6 +332,42 @@ impl Tweak {
                 "MPO lets the graphics card combine screen layers itself. On some setups it causes flicker, black flashes or stutter, especially with G-SYNC, FreeSync or several monitors. This writes the value from NVIDIA's own fix (Dwm OverlayTestMode = 5).",
                 "Stops MPO-related flicker and stutter, if that's what you see. Try updating the graphics driver first.",
                 "Only for that problem: it doesn't add FPS, and the screen may use slightly more power. Reports differ on whether Windows 11 24H2 and later still honor it; if nothing changes, Revert. Needs a restart.",
+            ),
+            Tweak::NvRebar => (
+                "Resizable BAR in every game",
+                "NVIDIA turns Resizable BAR on only for games it has tested. This turns it on for every game, the way NVIDIA Profile Inspector users do (rBAR enabled, options 1, 1 GB size limit). An NVIDIA setting outside its public documentation.",
+                "About 7% more FPS and better 1% lows on average in a 12-game test, over 20% in some games.",
+                "A few games run slower with it; if one does, switch this off. Undocumented by NVIDIA, so a future driver may ignore it.",
+            ),
+            Tweak::NvSmoothMotion => (
+                "Smooth Motion (frame generation for any game)",
+                "NVIDIA's frame generation in the driver for DirectX 11 and 12 games without their own DLSS Frame Generation: a generated frame between each pair of real ones. The same switch as Smooth Motion in the NVIDIA App.",
+                "Roughly doubles the frame rate you see.",
+                "Adds input lag and some artifacts, and looks worse than in-game DLSS Frame Generation. Leave it off for competitive games. Undocumented by NVIDIA.",
+            ),
+            Tweak::NvDlssPerformance => (
+                "DLSS in Performance mode",
+                "Games with DLSS use its Performance mode (rendering at half the resolution on each side), whatever DLSS mode the game is set to. Games without DLSS aren't affected.",
+                "The largest FPS gain available in DLSS games.",
+                "A softer image than DLSS Quality or Balanced, most visible at 1080p.",
+            ),
+            Tweak::NvFrameGenMax => (
+                "Maximum DLSS frame generation (4x)",
+                "Games with DLSS Frame Generation generate three frames for each rendered one (Multi Frame Generation 4x), whatever the game is set to.",
+                "Up to four times the frame rate you see.",
+                "More input lag than 2x and artifacts in fast motion. Works best when the game already runs at 60 FPS or more without it.",
+            ),
+            Tweak::NvTexturePerformance => (
+                "Texture filtering: High performance",
+                "The NVIDIA Control Panel's fastest texture filtering, with the anisotropic sample and filter optimizations on (Manage 3D settings > Texture filtering).",
+                "A little GPU time saved on texture sampling. Expect a small gain at most: current cards filter textures cheaply, and no recent benchmark measures it.",
+                "Textures can shimmer in motion and look slightly blurrier at sharp angles.",
+            ),
+            Tweak::NvVsyncOff => (
+                "VSync off in every game",
+                "Turns vertical sync off in the driver for every game, whatever the game's own setting (Manage 3D settings > Vertical sync: Off).",
+                "No frame-rate cap at the refresh rate and no VSync delay: the most FPS and the lowest input lag without G-SYNC.",
+                "Tearing (a visible line where two frames meet), most noticeable when FPS is close to the refresh rate.",
             ),
             Tweak::PrivacyAdId => (
                 "Turn off the advertising ID",
@@ -389,6 +467,9 @@ impl Tweak {
 
     /// Current state, serialized so it can be written back by `write`.
     pub(crate) fn snapshot(self) -> Result<String, String> {
+        if let Some(b) = self.boost() {
+            return b.snapshot();
+        }
         Ok(match self {
             // Windows keeps one power mode per power source; remember which one this value belongs to.
             Tweak::PowerMode => format!("{}:{}", overlay::source(), overlay::get()?),
@@ -412,6 +493,9 @@ impl Tweak {
 
     /// Writes the optimized state (`None`) or a saved snapshot.
     pub(crate) fn write(self, saved: Option<&str>) -> Result<(), String> {
+        if let Some(b) = self.boost() {
+            return saved.map_or_else(|| b.apply(), |s| b.restore(s));
+        }
         match self {
             Tweak::PowerMode => {
                 let (source, guid) = overlay::split_saved(saved.unwrap_or(overlay::BEST_PERFORMANCE));
@@ -491,6 +575,9 @@ impl Tweak {
     }
 
     pub fn is_applied(self) -> bool {
+        if let Some(b) = self.boost() {
+            return b.is_applied();
+        }
         match self {
             Tweak::PowerMode => overlay::get().is_ok_and(|g| g == overlay::BEST_PERFORMANCE),
             // Missing value = Windows' default, which is off.

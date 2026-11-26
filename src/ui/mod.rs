@@ -125,6 +125,7 @@ fn nav_item(ui: &mut Ui, page: Page, selected: bool, collapsed: bool) -> egui::R
 pub(crate) fn tweak_page(t: Tweak) -> Page {
     match t {
         Tweak::GpuScheduling | Tweak::NvShaderCache | Tweak::MpoOff => Page::Gpu,
+        t if t.boost().is_some() => Page::Gpu,
         Tweak::DeliveryUploadOff => Page::Network,
         Tweak::NoMouseAccel | Tweak::UsbSuspendOff => Page::Input,
         _ => Page::Windows,
@@ -1188,8 +1189,13 @@ impl App {
         }
 
         let mut flipped = None;
-        let lists: &[(&str, Option<bool>)] =
-            if windows { &[("Recommended", Some(true)), ("Advanced", Some(false))] } else { &[("Settings", None)] };
+        let lists: &[(&str, Option<bool>)] = match page {
+            Page::Windows => &[("Recommended", Some(true)), ("Advanced", Some(false))],
+            Page::Gpu => &[("Settings", Some(true)), ("Max FPS: more frames, each at a cost", Some(false))],
+            _ => &[("Settings", None)],
+        };
+        // Which list a setting belongs to: Windows splits by the Balanced preset, GPU puts the Max FPS switches apart.
+        let first = |t: &Tweak| if windows { Preset::Balanced.includes(*t) } else { t.boost().is_none() };
         for &(title, recommended) in lists {
             section(ui, title, |_| {});
             group(ui, |ui| {
@@ -1202,8 +1208,10 @@ impl App {
                             && in_page(t)
                             && *t != Tweak::MemoryIntegrityOff
                             && *t != Tweak::UpdatesOff
-                            && recommended.is_none_or(|r| Preset::Balanced.includes(*t) == r)
+                            && recommended.is_none_or(|r| first(t) == r)
                             && (*t != Tweak::NoBackgroundApps || has_backup(t))
+                            // A Max FPS switch this card can't use is left out (unless Kestrel changed it before).
+                            && (t.boost().is_none() || t.unsupported(build).is_none() || has_backup(t))
                     })
                     .collect();
                 if let Some(f) = tweak_rows(ui, g, shown, build) {

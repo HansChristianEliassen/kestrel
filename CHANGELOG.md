@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.30.0: Max FPS switches
+**GPU > Settings > Max FPS:** the NVIDIA Profile Inspector settings that raise FPS, as switches. Each one is off by default, states its cost, is saved first and reverted like any other setting, and shows only on cards that support it.
+- **Resizable BAR in every game** (RTX 30 and newer, with Resizable BAR on in the BIOS). NVIDIA enables it only for games it has tested. One 12-game test measured about 7% more average FPS and better 1% lows, over 20% in some games; a few games run slower.
+- **Smooth Motion** (RTX 40 and newer): frame generation in the driver for DirectX 11 and 12 games without DLSS Frame Generation. Roughly doubles the frame rate you see, with added input lag and artifacts.
+- **DLSS in Performance mode** (any RTX): games with DLSS use Performance mode whatever they're set to. The biggest FPS gain in those games; a softer image.
+- **Maximum DLSS frame generation** (RTX 50): 4x Multi Frame Generation in games with DLSS Frame Generation.
+- **Texture filtering: High performance:** the Control Panel's fastest filtering with both anisotropic optimizations on. A small gain at most (no recent benchmark measures it), with some texture shimmer.
+- **VSync off in every game** (without G-SYNC): no cap at the refresh rate and no VSync delay, at the cost of tearing. With G-SYNC on, the gaming profile's VSync and frame cap setup is used instead.
+
+Resizable BAR and Smooth Motion aren't in NVIDIA's public documentation. Their setting IDs come from NVIDIA Profile Inspector's settings list, and a future driver may ignore them. Kestrel's driver code now also writes the 64-bit values Resizable BAR needs.
+
+**NVIDIA gaming profile:** it now also sets Preferred refresh rate to Highest available, so fullscreen games run at the screen's top refresh rate. Turn the profile on again to add it.
+
+Left out of a user's Profile Inspector profile on purpose: anti-aliasing, sharpening, NIS and ambient occlusion choices (image, not FPS), forced threaded optimization (OpenGL only; Auto decides), and the OpenGL/Vulkan present method (varies by game).
+
 ## 0.29.0: G-SYNC setup in the NVIDIA gaming profile
 - **The NVIDIA gaming profile now includes G-SYNC's lowest-latency setup** when G-SYNC (or G-SYNC Compatible) is on for your main display: Vertical sync On in the driver plus a frame-rate cap a little under the refresh rate, as NVIDIA Reflex picks it (144 Hz → 138 FPS, 165 → 157, 240 → 224). That keeps every frame inside G-SYNC's range, with no tearing and without VSync's added delay. Kestrel reads the G-SYNC state from NVIDIA's driver (NvAPI), so PCs without G-SYNC get nothing extra. Games with NVIDIA Reflex manage the cap themselves.
 - Trade-offs, stated in the setting: FPS is capped just under the refresh rate, and games on a second screen without G-SYNC get VSync.

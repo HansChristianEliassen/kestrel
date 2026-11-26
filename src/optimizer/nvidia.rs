@@ -42,6 +42,13 @@ pub const DLSS_PRESET_LATEST: u32 = 0x00FF_FFFF;
 /// "Vertical Sync" (Force on) and "Frame Rate Limiter" (frames per second), for the G-SYNC setup.
 const VSYNC_MODE: u32 = 0x00A8_79CF;
 const VSYNC_FORCE_ON: u32 = 0x4781_4940;
+const VSYNC_FORCE_OFF: u32 = 0x0841_6747;
+/// "Preferred refresh rate": 1 = Highest available.
+const REFRESH_RATE: u32 = 0x0064_B541;
+// "Texture filtering": Quality (20 = High performance), Anisotropic sample and filter optimizations.
+const TEX_QUALITY: u32 = 0x00CE_2691;
+const TEX_ANISO_SAMPLE_OPT: u32 = 0x00E7_3211;
+const TEX_ANISO_FILTER_OPT: u32 = 0x0084_CD70;
 const FRAME_LIMIT: u32 = 0x1083_5002;
 // NvAPI display functions: the main display, and its variable refresh (G-SYNC) state.
 const GET_PRIMARY_DISPLAY: u32 = 0x1E9D_8A31;
@@ -211,6 +218,45 @@ impl Drs {
         }
     }
 
+    /// A setting's value in this profile, 32-bit or binary (None when the profile doesn't set it).
+    fn get_val_in(&self, profile: Handle, id: u32) -> Result<Option<Val>, String> {
+        unsafe {
+            let get: unsafe extern "C" fn(Handle, Handle, u32, *mut Setting) -> Status = self.func(DRS_GET_SETTING)?;
+            let mut s: Box<Setting> = Box::new(std::mem::zeroed());
+            s.version = SETTING_SIZE as u32 | (1 << 16);
+            match get(self.session, profile, id, &mut *s) {
+                SETTING_NOT_FOUND => Ok(None),
+                0 if s.location != 0 => Ok(None),
+                // NVDRS_BINARY_TYPE: NVDRS_BINARY_SETTING { valueLength, valueData }; up to 8 bytes as a number.
+                0 if s.kind == 1 => {
+                    let len = (u32::from_le_bytes(s.current[..4].try_into().unwrap()) as usize).min(8);
+                    let mut b = [0u8; 8];
+                    b[..len].copy_from_slice(&s.current[4..4 + len]);
+                    Ok(Some(Val::B(u64::from_le_bytes(b))))
+                }
+                0 => Ok(Some(Val::D(u32::from_le_bytes(s.current[..4].try_into().unwrap())))),
+                st => check(st, "read the setting").map(|_| None),
+            }
+        }
+    }
+
+    fn set_val_in(&self, profile: Handle, id: u32, value: Val) -> Result<(), String> {
+        let v = match value {
+            Val::D(v) => return self.set_in(profile, id, v),
+            Val::B(v) => v,
+        };
+        unsafe {
+            let set: unsafe extern "C" fn(Handle, Handle, *mut Setting) -> Status = self.func(DRS_SET_SETTING)?;
+            let mut s: Box<Setting> = Box::new(std::mem::zeroed());
+            s.version = SETTING_SIZE as u32 | (1 << 16);
+            s.id = id;
+            s.kind = 1; // NVDRS_BINARY_TYPE
+            s.current[..4].copy_from_slice(&8u32.to_le_bytes());
+            s.current[4..12].copy_from_slice(&v.to_le_bytes());
+            check(set(self.session, profile, &mut *s), "change the setting")
+        }
+    }
+
     fn save(&self) -> Result<(), String> {
         unsafe {
             let save: unsafe extern "C" fn(Handle) -> Status = self.func(DRS_SAVE_SETTINGS)?;
@@ -310,6 +356,154 @@ pub fn available() -> bool {
     *AVAILABLE.get_or_init(|| Drs::open().is_ok())
 }
 
+/// A driver setting's value: 32-bit (most) or binary (up to 8 bytes, like the Resizable BAR size limit).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Val {
+    D(u32),
+    B(u64),
+}
+
+impl Val {
+    /// For saved originals: decimal for 32-bit values, "x" and hex for binary ones.
+    fn to_text(self) -> String {
+        match self {
+            Val::D(v) => v.to_string(),
+            Val::B(v) => format!("x{v:x}"),
+        }
+    }
+
+    fn parse(s: &str) -> Option<Val> {
+        match s.strip_prefix('x') {
+            Some(h) => u64::from_str_radix(h, 16).ok().map(Val::B),
+            None => s.parse().ok().map(Val::D),
+        }
+    }
+}
+
+/// RTX series of this PC's NVIDIA card (20, 30, 40, 50…), looked up once.
+pub fn series() -> Option<u32> {
+    static SERIES: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *SERIES.get_or_init(|| crate::nvdriver::detect().and_then(|g| rtx_series(&g.name)))
+}
+
+// Settings behind the Max FPS switches. Resizable BAR and Smooth Motion aren't in NVIDIA's public header; their IDs
+// are from NVIDIA Profile Inspector's settings list (CustomSettingNames.xml).
+const REBAR_ENABLE: u32 = 0x000F_00BA;
+const REBAR_ENABLE_V2: u32 = 0x000B_FA21;
+const REBAR_OPTIONS: u32 = 0x000F_00BB;
+const REBAR_SIZE_LIMIT: u32 = 0x000F_00FF;
+const SMOOTH_MOTION: u32 = 0xB0D3_84C0;
+const SMOOTH_MOTION_APIS: u32 = 0xB0CC_0875;
+const DLSS_SR_MODE: u32 = 0x10AF_B768;
+const DLSS_FG_OVERRIDE: u32 = 0x10E4_1E03;
+const DLSSG_MULTI_FRAME_COUNT: u32 = 0x104D_6667;
+
+/// Opt-in settings that raise FPS at a cost, each in the driver's global profile.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Boost {
+    Rebar,
+    SmoothMotion,
+    DlssPerformance,
+    FrameGenMax,
+    TexturePerformance,
+    VsyncOff,
+}
+
+impl Boost {
+    fn values(self) -> &'static [(u32, Val)] {
+        match self {
+            // Enabled (v1 and v2 switches), options 1, and a 1 GB size limit, as Profile Inspector guides set it.
+            Boost::Rebar => &[
+                (REBAR_ENABLE, Val::D(1)),
+                (REBAR_ENABLE_V2, Val::D(2)),
+                (REBAR_OPTIONS, Val::D(1)),
+                (REBAR_SIZE_LIMIT, Val::B(0x4000_0000)),
+            ],
+            // On, for DirectX 12 and DirectX 11 games.
+            Boost::SmoothMotion => &[(SMOOTH_MOTION, Val::D(1)), (SMOOTH_MOTION_APIS, Val::D(3))],
+            // DLSS Super Resolution override on, in Performance mode (0).
+            Boost::DlssPerformance => &[(DLSS_SR_OVERRIDE, Val::D(1)), (DLSS_SR_MODE, Val::D(0))],
+            // Frame Generation override on, three generated frames per rendered one (4x).
+            Boost::FrameGenMax => &[(DLSS_FG_OVERRIDE, Val::D(1)), (DLSSG_MULTI_FRAME_COUNT, Val::D(3))],
+            // The Control Panel's "High performance" texture filtering with both optimizations on.
+            Boost::TexturePerformance => &[(TEX_QUALITY, Val::D(20)), (TEX_ANISO_SAMPLE_OPT, Val::D(1)), (TEX_ANISO_FILTER_OPT, Val::D(1))],
+            Boost::VsyncOff => &[(VSYNC_MODE, Val::D(VSYNC_FORCE_OFF))],
+        }
+    }
+
+    /// Why it can't be used on this PC, if it can't. Cached: called while drawing the settings list.
+    pub fn unavailable(self) -> Option<&'static str> {
+        if !available() {
+            return Some("Needs an NVIDIA graphics card and driver.");
+        }
+        let s = series().unwrap_or(0);
+        match self {
+            Boost::Rebar if s < 30 => Some("Needs an NVIDIA RTX 30 series card or newer."),
+            Boost::Rebar if !bios_rebar() => {
+                Some("Turn on Resizable BAR (and Above 4G Decoding) in the BIOS first; Found on this PC explains how.")
+            }
+            Boost::SmoothMotion if s < 40 => Some("Needs an NVIDIA RTX 40 series card or newer."),
+            Boost::DlssPerformance if s < 20 => Some("Needs an NVIDIA RTX card (DLSS)."),
+            Boost::FrameGenMax if s < 50 => Some("Needs an NVIDIA RTX 50 series card (Multi Frame Generation)."),
+            // With G-SYNC the gaming profile sets VSync on, the lowest-latency setup without tearing.
+            Boost::VsyncOff if gsync_on() => Some("G-SYNC is on: the NVIDIA gaming profile uses VSync with a frame cap instead."),
+            _ => None,
+        }
+    }
+
+    /// The settings as they are now, for the saved original ("-" where the global profile doesn't set one).
+    pub fn snapshot(self) -> Result<String, String> {
+        let drs = Drs::open()?;
+        let base = drs.base_profile()?;
+        let vals: Result<Vec<String>, String> =
+            self.values().iter().map(|(id, _)| Ok(drs.get_val_in(base, *id)?.map_or("-".into(), Val::to_text))).collect();
+        Ok(vals?.join(","))
+    }
+
+    pub fn apply(self) -> Result<(), String> {
+        let drs = Drs::open()?;
+        let base = drs.base_profile()?;
+        for (id, v) in self.values() {
+            drs.set_val_in(base, *id, *v)?;
+        }
+        drs.save()
+    }
+
+    /// Puts the saved original back. The DLSS override switch stays on while the gaming profile uses it.
+    pub fn restore(self, saved: &str) -> Result<(), String> {
+        let drs = Drs::open()?;
+        let base = drs.base_profile()?;
+        for ((id, _), p) in self.values().iter().zip(saved.split(',')) {
+            if *id == DLSS_SR_OVERRIDE && dlss_model_is_free() && profile_applied() {
+                continue;
+            }
+            match p {
+                "-" => drs.clear_in(base, *id)?,
+                p => drs.set_val_in(base, *id, Val::parse(p).ok_or("Saved value is invalid.")?)?,
+            }
+        }
+        drs.save()
+    }
+
+    pub fn is_applied(self) -> bool {
+        let Ok(drs) = Drs::open() else { return false };
+        let Ok(base) = drs.base_profile() else { return false };
+        self.values().iter().all(|(id, v)| drs.get_val_in(base, *id).is_ok_and(|now| now == Some(*v)))
+    }
+}
+
+/// G-SYNC on for the main display, checked once (for the settings list, drawn every frame).
+fn gsync_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| gsync_frame_cap().is_some())
+}
+
+/// Resizable BAR on in the BIOS (Windows reports GPU upload heaps), checked once.
+fn bios_rebar() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| super::hardware::resizable_bar().is_some_and(|(_, on)| on))
+}
+
 /// Whether the card is an RTX 40 series or newer, where the newest DLSS model costs next to no FPS (on RTX 20
 /// and 30 cards it costs a few percent, so the gaming profile leaves DLSS alone there). Checked once.
 pub fn dlss_model_is_free() -> bool {
@@ -325,7 +519,8 @@ fn rtx_series(name: &str) -> Option<u32> {
 
 /// The global settings Kestrel's NVIDIA gaming profile manages, in the order its saved original lists them.
 /// Settings added later go at the end, so originals saved by earlier versions still line up.
-const PROFILE: [u32; 7] = [SHADER_CACHE_SIZE, POWER_MODE, PRERENDER_LIMIT, DLSS_SR_OVERRIDE, DLSS_SR_PRESET, VSYNC_MODE, FRAME_LIMIT];
+const PROFILE: [u32; 8] =
+    [SHADER_CACHE_SIZE, POWER_MODE, PRERENDER_LIMIT, DLSS_SR_OVERRIDE, DLSS_SR_PRESET, VSYNC_MODE, FRAME_LIMIT, REFRESH_RATE];
 
 /// The global profile's own values of these settings (None where it doesn't set one).
 fn global(ids: &[u32]) -> Result<Vec<Option<u32>>, String> {
@@ -351,9 +546,10 @@ fn set_global(values: &[(u32, Option<u32>)]) -> Result<(), String> {
 fn profile_values(cache_now: Option<u32>) -> Vec<(u32, Option<u32>)> {
     let mut v = vec![
         (SHADER_CACHE_SIZE, Some(cache_now.unwrap_or(0).max(SHADER_CACHE_TARGET_MB))),
-        // Prefer maximum performance; Low Latency Mode On.
+        // Prefer maximum performance; Low Latency Mode On; fullscreen games at the screen's highest refresh rate.
         (POWER_MODE, Some(1)),
         (PRERENDER_LIMIT, Some(1)),
+        (REFRESH_RATE, Some(1)),
     ];
     if dlss_model_is_free() {
         v.extend([(DLSS_SR_OVERRIDE, Some(1)), (DLSS_SR_PRESET, Some(DLSS_PRESET_LATEST))]);
@@ -485,6 +681,35 @@ mod tests {
         restore_profile(&before).unwrap();
         assert_eq!(profile_snapshot().unwrap(), before, "originals back exactly");
         println!("restored: {before}");
+    }
+
+    #[test]
+    fn values_round_trip() {
+        for v in [Val::D(0), Val::D(1), Val::D(0x4781_4940), Val::B(0x4000_0000), Val::B(0)] {
+            assert_eq!(Val::parse(&v.to_text()), Some(v));
+        }
+        assert_eq!(Val::parse("bad"), None);
+    }
+
+    #[test]
+    #[ignore = "reads this PC's NVIDIA global settings for the Max FPS switches (read-only)"]
+    fn live_boosts() {
+        for b in [Boost::Rebar, Boost::SmoothMotion, Boost::DlssPerformance, Boost::FrameGenMax, Boost::TexturePerformance, Boost::VsyncOff]
+        {
+            println!("{b:?}: unavailable {:?}, now {:?}, applied {}", b.unavailable(), b.snapshot(), b.is_applied());
+        }
+    }
+
+    #[test]
+    #[ignore = "applies the texture filtering switch to this PC's global driver settings and puts the originals back"]
+    fn live_boost_round_trip() {
+        let b = Boost::TexturePerformance;
+        let before = b.snapshot().unwrap();
+        b.apply().unwrap();
+        println!("before {before}, during {} (applied {})", b.snapshot().unwrap(), b.is_applied());
+        assert!(b.is_applied());
+        b.restore(&before).unwrap();
+        assert_eq!(b.snapshot().unwrap(), before, "originals back exactly");
     }
 
     #[test]
