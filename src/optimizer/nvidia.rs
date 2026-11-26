@@ -155,11 +155,6 @@ impl Drs {
         }
     }
 
-    /// The current value of a 32-bit setting in the global profile.
-    fn get(&self, id: u32) -> Result<u32, String> {
-        self.get_in(self.base_profile()?, id)?.ok_or_else(|| "Couldn't read the setting: the driver doesn't have it.".into())
-    }
-
     /// The value a profile itself sets (None when it inherits the global or default value).
     fn get_in(&self, profile: Handle, id: u32) -> Result<Option<u32>, String> {
         unsafe {
@@ -279,11 +274,6 @@ fn check(status: Status, what: &str) -> Result<(), String> {
         -137 => Err(format!("Couldn't {what}: needs administrator rights.")),
         s => Err(format!("Couldn't {what} (NVIDIA error {s}).")),
     }
-}
-
-/// The global shader cache size in MB, or why it can't be read.
-pub fn shader_cache() -> Result<u32, String> {
-    Drs::open()?.get(SHADER_CACHE_SIZE)
 }
 
 /// Whether this PC has an NVIDIA driver with the settings API (checked once).
@@ -458,7 +448,7 @@ mod tests {
     #[test]
     #[ignore = "reads this PC's NVIDIA driver settings (read-only)"]
     fn live_read() {
-        eprintln!("shader cache MB: {:?}", shader_cache());
+        eprintln!("gaming profile settings: {:?}", profile_snapshot());
         // KESTREL_NV_EXE=<full path of a game's exe>: its profile and own values, read-only.
         if let Ok(exe) = std::env::var("KESTREL_NV_EXE") {
             eprintln!("has a profile: {:?}", Drs::open().unwrap().find_app(&exe).map(|p| p.is_some()));

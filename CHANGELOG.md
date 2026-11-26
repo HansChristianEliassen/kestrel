@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.28.2: NVIDIA gaming profile fix
+- **GPU > Settings no longer says "This PC has no NVIDIA graphics card" when there is one.** The check read the driver's global shader cache size, which a clean driver installation leaves unset. Kestrel now only checks that NVIDIA's driver responds, and says "Needs an NVIDIA graphics card and driver" when it really doesn't.
+
 ## 0.28.1: Safer driver installs
 A driver install from the Driver Optimizer looked like a crash: Kestrel disappeared, and with clean installation on, Windows showed no graphics driver for a few minutes while NVIDIA's installer kept working out of sight. Restarting at that moment could really leave the PC without a driver.
 - **A visible install window:** NVIDIA's installer now runs in a window that says what's happening, that a missing driver for a while is normal, and not to restart or turn off the PC until it closes. Kestrel opens again with the result, as before.

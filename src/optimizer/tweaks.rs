@@ -132,7 +132,8 @@ impl Tweak {
     /// Why changing this setting would do nothing on this PC right now (checked live, so call it off the UI thread).
     pub fn not_needed(self) -> Option<String> {
         match self {
-            Tweak::NvShaderCache => super::nvidia::shader_cache().err().map(|_| "This PC has no NVIDIA graphics card.".into()),
+            // Whether the driver answers at all: a setting the global profile leaves unset (after a clean install) is fine.
+            Tweak::NvShaderCache => (!super::nvidia::available()).then(|| "Needs an NVIDIA graphics card and driver.".into()),
             // Windows only applies power modes on top of the Balanced plan; other plans set performance themselves.
             Tweak::PowerMode => match active_power_scheme() {
                 Ok(plan) if plan != BALANCED => Some(format!(
