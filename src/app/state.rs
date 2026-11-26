@@ -6,7 +6,7 @@ use crate::cleaner::CleanItem;
 use crate::gamemode;
 use crate::optimizer::games::Game;
 use crate::optimizer::health::Check;
-use crate::optimizer::{Preset, Tweak};
+use crate::optimizer::Tweak;
 use crate::startup::StartupEntry;
 use crate::uninstaller::InstalledApp;
 use crate::upgrade::apps::AppUpdate;
@@ -100,8 +100,6 @@ pub struct ServicesState {
     pub list: Vec<crate::services::Candidate>,
     pub load: Job<Vec<crate::services::Candidate>>,
     pub loaded: bool,
-    /// Ticked rows, by `Candidate::id`. Filled with the recommended ones on first load.
-    pub selected: std::collections::HashSet<&'static str>,
     /// Apply or Revert in progress: one result line per service.
     pub apply: Job<Vec<String>>,
 }
@@ -155,8 +153,6 @@ pub enum Action {
     InstallDrivers(Vec<DriverUpdate>),
     /// Windows > Performance: the profile items to apply.
     ApplyProfile(Vec<crate::optimizer::profiles::Item>),
-    /// Windows > Services: the rows to apply.
-    ApplyServices(Vec<crate::services::Candidate>),
 }
 
 pub struct Confirm {
@@ -292,8 +288,6 @@ pub struct Measured {
 }
 
 pub struct GamingState {
-    pub preset: Preset,
-    pub selected: [bool; Tweak::ALL.len()],
     pub status: TweakStatus,
     pub status_job: Job<TweakStatus>,
     pub checks: Vec<Check>,
@@ -330,8 +324,6 @@ pub struct GamingState {
 impl Default for GamingState {
     fn default() -> Self {
         GamingState {
-            preset: Preset::Balanced,
-            selected: Tweak::ALL.map(|t| Preset::Balanced.includes(t)),
             status: Vec::new(),
             status_job: Job::default(),
             checks: Vec::new(),

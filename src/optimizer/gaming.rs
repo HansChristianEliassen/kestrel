@@ -6,6 +6,7 @@ use std::path::Path;
 use winreg::enums::HKEY_CURRENT_USER;
 use winreg::RegKey;
 
+use super::nvidia;
 use super::tweaks::{get_kv, read_sz, set_kv, write_sz};
 use super::Tweak;
 use crate::utils::{backup, log};
@@ -14,7 +15,6 @@ use crate::utils::{backup, log};
 pub enum Preset {
     Balanced,
     Performance,
-    Custom,
 }
 
 impl Preset {
@@ -25,7 +25,6 @@ impl Preset {
             // Power mode rather than the High performance plan: it's Windows 11's supported switch, and it exists on
             // Modern Standby laptops that don't offer the old plans.
             Preset::Performance => Preset::Balanced.includes(t) || t == Tweak::PowerMode,
-            Preset::Custom => false,
         }
     }
 }
@@ -69,16 +68,31 @@ pub enum GameSetting {
     HighPerfGpu,
     FsoOff,
     WindowedOptOff,
+    /// In the game's NVIDIA driver profile.
+    NvMaxPerf,
+    NvLowLatency,
 }
 
 impl GameSetting {
-    pub const ALL: [GameSetting; 3] = [GameSetting::HighPerfGpu, GameSetting::FsoOff, GameSetting::WindowedOptOff];
+    pub const ALL: [GameSetting; 5] =
+        [GameSetting::HighPerfGpu, GameSetting::FsoOff, GameSetting::WindowedOptOff, GameSetting::NvMaxPerf, GameSetting::NvLowLatency];
+
+    /// The NVIDIA driver setting behind it, for the NVIDIA ones.
+    fn nv_id(self) -> Option<u32> {
+        match self {
+            GameSetting::NvMaxPerf => Some(nvidia::POWER_MODE),
+            GameSetting::NvLowLatency => Some(nvidia::PRERENDER_LIMIT),
+            _ => None,
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {
             GameSetting::HighPerfGpu => "High-performance GPU",
             GameSetting::FsoOff => "Fullscreen optimizations off",
             GameSetting::WindowedOptOff => "Windowed-game optimizations off",
+            GameSetting::NvMaxPerf => "NVIDIA: Prefer maximum performance",
+            GameSetting::NvLowLatency => "NVIDIA: Low latency mode",
         }
     }
 
@@ -93,11 +107,21 @@ impl GameSetting {
             GameSetting::WindowedOptOff => {
                 "Leaves just this game out of Windows 11's windowed-game optimizations, for the rare game that glitches with them."
             }
+            GameSetting::NvMaxPerf => {
+                "Keeps the graphics card at full speed while this game runs, so light or processor-heavy games don't stutter when it clocks down. A small effect; uses more power while you play. NVIDIA Control Panel > Program settings > Power management mode."
+            }
+            GameSetting::NvLowLatency => {
+                "Low Latency Mode = On in the NVIDIA Control Panel: the processor prepares at most one frame ahead, which cuts input lag when the graphics card is the limit. Works in DirectX 11 and older games; DirectX 12 and Vulkan games ignore it. If the game has NVIDIA Reflex, use Reflex in its settings instead."
+            }
         }
     }
 
     pub fn unsupported(self, build: u32) -> Option<&'static str> {
-        (self == GameSetting::WindowedOptOff && build < 22000).then_some("Windows 11 only.")
+        match self {
+            GameSetting::WindowedOptOff if build < 22000 => Some("Windows 11 only."),
+            GameSetting::NvMaxPerf | GameSetting::NvLowLatency if !nvidia::available() => Some("Needs an NVIDIA graphics card and driver."),
+            _ => None,
+        }
     }
 
     fn backup_key(self, exe: &str) -> String {
@@ -105,6 +129,8 @@ impl GameSetting {
             GameSetting::HighPerfGpu => "gpu:",
             GameSetting::FsoOff => "fso:",
             GameSetting::WindowedOptOff => "swap:",
+            GameSetting::NvMaxPerf => "nvpower:",
+            GameSetting::NvLowLatency => "nvlatency:",
         };
         format!("{prefix}{exe}")
     }
@@ -123,11 +149,15 @@ impl GameSetting {
             GameSetting::HighPerfGpu => "2",
             GameSetting::FsoOff => "1",
             GameSetting::WindowedOptOff => "0",
+            GameSetting::NvMaxPerf | GameSetting::NvLowLatency => "1",
         }
     }
 
     /// Current raw value: the DirectX preference entry, or "1" when the compatibility flag is set.
     fn read(self, exe: &str) -> Option<String> {
+        if let Some(id) = self.nv_id() {
+            return nvidia::app_setting(exe, id).ok().flatten().map(|v| v.to_string());
+        }
         match self {
             GameSetting::FsoOff => read_sz(LAYERS, exe).filter(|v| has_flag(v)).map(|_| "1".into()),
             _ => read_sz(GPU_PREFS, exe).and_then(|v| get_kv(&v, self.dx_entry()).map(String::from)),
@@ -136,6 +166,10 @@ impl GameSetting {
 
     /// Writes a raw value (`None` = Windows default), leaving the program's other settings alone.
     fn write(self, exe: &str, value: Option<&str>) -> Result<(), String> {
+        if let Some(id) = self.nv_id() {
+            let value = value.map(|v| v.parse::<u32>().map_err(|_| "Saved value is invalid.".to_string())).transpose()?;
+            return nvidia::set_app_setting(exe, id, value);
+        }
         match self {
             GameSetting::FsoOff => {
                 let current = read_sz(LAYERS, exe);
@@ -186,7 +220,9 @@ pub fn configured() -> BTreeSet<String> {
     for key in [LAYERS, GPU_PREFS] {
         let Ok(k) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(key) else { continue };
         for (exe, _) in k.enum_values().flatten() {
-            if exe.to_ascii_lowercase().ends_with(".exe") && GameSetting::ALL.iter().any(|s| s.read(&exe).as_deref() == Some(s.target())) {
+            if exe.to_ascii_lowercase().ends_with(".exe")
+                && GameSetting::ALL.iter().any(|s| s.nv_id().is_none() && s.read(&exe).as_deref() == Some(s.target()))
+            {
                 out.insert(exe);
             }
         }

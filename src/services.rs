@@ -204,7 +204,6 @@ pub struct Candidate {
     pub to: Start,
     /// (service key name, current start type).
     pub services: Vec<(String, Start)>,
-    pub running: bool,
     /// Kestrel saved an original for at least one of them.
     pub saved: bool,
 }
@@ -218,11 +217,6 @@ impl Candidate {
     /// Kestrel changed it, and Windows or the app put it back.
     pub fn changed_back(&self) -> bool {
         self.saved && !self.applied()
-    }
-
-    /// Stable id for selections.
-    pub fn id(&self) -> &'static str {
-        self.title
     }
 }
 
@@ -256,7 +250,6 @@ pub fn candidates() -> Vec<Candidate> {
                 lose: d.lose,
                 group: d.group,
                 to: d.to,
-                running: services.iter().any(|(n, _)| crate::system::service_state(n)),
                 saved: services.iter().any(|(n, _)| saved.contains_key(&key(n))),
                 services,
             })

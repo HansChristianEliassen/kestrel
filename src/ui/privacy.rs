@@ -4,7 +4,6 @@ use eframe::egui::Ui;
 
 use super::components::*;
 use super::tweak_rows;
-use crate::app::state::{Action, Confirm};
 use crate::app::App;
 use crate::optimizer::Tweak;
 use crate::system::open_uri;
@@ -14,23 +13,11 @@ impl App {
         let build = self.build;
         let g = &mut self.gaming;
         let all: Vec<Tweak> = Tweak::ALL.into_iter().filter(|t| t.is_privacy()).collect();
-        let chosen: Vec<Tweak> = all.iter().copied().filter(|t| g.selected[t.index()]).collect();
-        let busy = g.apply.running();
-        let (mut apply, mut pick_off) = (false, false);
-        ui.horizontal(|ui| {
-            apply = accent_button(ui, !busy && !chosen.is_empty(), &format!("Apply {} selected", chosen.len())).clicked();
-            pick_off = button(ui, !busy, "Select all that are off").clicked();
-            if busy || g.status_job.running() {
-                progress(ui, if busy { "Working…" } else { "Reading current settings…" });
-            }
-        });
-        if pick_off {
-            for t in &all {
-                g.selected[t.index()] = !g.status.get(t.index()).is_some_and(|s| s.0);
-            }
+        if g.apply.running() || g.status_job.running() {
+            progress(ui, if g.apply.running() { "Working…" } else { "Reading current settings…" });
         }
         ui.add_space(S3);
-        let revert = group(ui, |ui| tweak_rows(ui, g, all.clone(), build));
+        let flipped = group(ui, |ui| tweak_rows(ui, g, all, build));
         ui.add_space(S2);
         ui.horizontal_wrapped(|ui| {
             caption(ui, "The same switches as in Settings, for your account only.");
@@ -38,18 +25,8 @@ impl App {
                 open_uri("ms-settings:privacy");
             }
         });
-        if let Some(t) = revert {
-            self.start_restore(ui.ctx(), vec![t], false);
-        }
-        if apply {
-            let body = chosen.iter().map(|t| t.info().title).collect::<Vec<_>>().join("\n");
-            self.confirm = Some(Confirm {
-                title: format!("Apply {} privacy settings?", chosen.len()),
-                body: format!("{body}\n\nEach original value is saved first. Undo any time with Revert, or Settings > Restore everything."),
-                warning: None,
-                ok: "Apply",
-                action: Action::ApplyTweaks(chosen),
-            });
+        if let Some((t, on)) = flipped {
+            self.set_tweak(ui.ctx(), t, on);
         }
     }
 }

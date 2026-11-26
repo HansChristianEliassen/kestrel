@@ -17,6 +17,10 @@ impl App {
     pub(crate) fn gpu_page(&mut self, ui: &mut Ui) {
         page_header(ui, "GPU", "Graphics settings, and what Kestrel found about your graphics card and screen.");
         self.settings_list(ui, Page::Gpu);
+        if crate::optimizer::nvidia::available() {
+            ui.add_space(S2);
+            caption(ui, "Per-game NVIDIA settings (Prefer maximum performance, Low latency mode) are on each game's page: Games > the game > Game Mode.");
+        }
         self.page_checks(
             ui,
             Some(&[

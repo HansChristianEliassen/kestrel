@@ -1131,6 +1131,15 @@ impl App {
         }
     }
 
+    /// A settings switch flipped: apply the setting, or put back the value saved before Kestrel changed it.
+    pub(crate) fn set_tweak(&mut self, ctx: &egui::Context, t: Tweak, on: bool) {
+        if on {
+            self.gaming.apply.start(ctx, move || crate::app::apply_tweaks(&[t]));
+        } else {
+            self.start_restore(ctx, vec![t], false);
+        }
+    }
+
     /// The Windows settings of one page: Windows (with the profile), GPU, Network or Controller & input.
     pub(crate) fn settings_list(&mut self, ui: &mut Ui, page: Page) {
         let windows = page == Page::Windows;
@@ -1142,14 +1151,11 @@ impl App {
         let build = self.build;
         let admin = self.admin;
         let g = &mut self.gaming;
-        let chosen: Vec<Tweak> = Tweak::ALL.into_iter().filter(|t| !t.is_privacy() && in_page(t) && g.selected[t.index()]).collect();
         let busy = g.apply.running();
-        let (mut apply, mut restore, mut restore_point) = (false, false, false);
+        let (mut restore, mut restore_point) = (false, false);
         ui.add_space(S2);
-        // The smaller pages show the button only once something is ticked.
-        if windows || busy || !chosen.is_empty() {
+        if windows || busy || g.status_job.running() {
             ui.horizontal(|ui| {
-                apply = accent_button(ui, !busy && !chosen.is_empty(), &format!("Apply {} selected", chosen.len())).clicked();
                 if windows {
                     restore = button(ui, !busy, "Restore originals").clicked();
                     restore_point = button(ui, !busy && admin, "Create restore point")
@@ -1180,7 +1186,7 @@ impl App {
             info_bar(ui, Status::Caution, &text, |ui| reapply = row_button(ui, true, "Apply again").clicked());
         }
 
-        let mut revert = None;
+        let mut flipped = None;
         let lists: &[(&str, Option<bool>)] =
             if windows { &[("Recommended", Some(true)), ("Advanced", Some(false))] } else { &[("Settings", None)] };
         for &(title, recommended) in lists {
@@ -1199,8 +1205,8 @@ impl App {
                             && (*t != Tweak::NoBackgroundApps || has_backup(t))
                     })
                     .collect();
-                if let Some(t) = tweak_rows(ui, g, shown, build) {
-                    revert = Some(t);
+                if let Some(f) = tweak_rows(ui, g, shown, build) {
+                    flipped = Some(f);
                 }
             });
         }
@@ -1221,8 +1227,8 @@ impl App {
             }
         });
         }
-        if let Some(t) = revert {
-            self.start_restore(ui.ctx(), vec![t], false);
+        if let Some((t, on)) = flipped {
+            self.set_tweak(ui.ctx(), t, on);
         }
         if reapply {
             let body = changed.iter().map(|t| t.info().title).collect::<Vec<_>>().join("\n");
@@ -1236,18 +1242,6 @@ impl App {
         }
         if restore_point {
             self.start_restore_point(ui.ctx());
-        }
-        if apply {
-            let body = chosen.iter().map(|t| t.info().title).collect::<Vec<_>>().join("\n");
-            self.confirm = Some(Confirm {
-                title: format!("Apply {} settings?", chosen.len()),
-                body: format!("{body}\n\nEach original value is saved first. Undo any time with Revert or Restore originals."),
-                warning: chosen
-                    .contains(&Tweak::HighPerfPower)
-                    .then(|| "High performance uses more power; on a laptop, use it while plugged in.".into()),
-                ok: "Apply",
-                action: Action::ApplyTweaks(chosen),
-            });
         }
         if restore {
             self.confirm = Some(restore_all_confirm());
@@ -1756,61 +1750,54 @@ fn result_summary(ui: &mut Ui, lines: &[String]) {
 
 /// One row per tweak: checkbox, name, state and Revert on the title line, then what it does and its trade-off.
 /// Returns the tweak whose Revert was clicked.
-pub(super) fn tweak_rows(ui: &mut Ui, g: &mut GamingState, shown: Vec<Tweak>, build: u32) -> Option<Tweak> {
-    let mut revert = None;
+/// One row per setting, with a switch that applies or reverts it at once. Returns the switch flipped: (setting, on).
+pub(super) fn tweak_rows(ui: &mut Ui, g: &mut GamingState, shown: Vec<Tweak>, build: u32) -> Option<(Tweak, bool)> {
+    let busy = g.apply.running();
+    let mut flipped = None;
     for (i, t) in shown.into_iter().enumerate() {
         let info = t.info();
         let (applied, backup, not_needed) = g.status.get(t.index()).cloned().unwrap_or_default();
         let unsupported = t.unsupported(build).map(str::to_string).or(not_needed);
         let not_needed = unsupported.is_some() && t.unsupported(build).is_none();
-        if unsupported.is_some() {
-            g.selected[t.index()] = false;
-        }
+        // Kestrel only turns off what it turned on: otherwise it doesn't know the value from before.
+        let outside = applied && !backup;
         row(ui, i, |ui| {
-            // Title line: checkbox and name on the left; state and Revert on the same line, right.
             ui.horizontal(|ui| {
-                let r = ui
-                    .add_enabled_ui(unsupported.is_none(), |ui| {
-                        checkbox(ui, &mut g.selected[t.index()], RichText::new(info.title).color(TEXT))
-                    })
-                    .inner;
-                // Hand-picking gaming settings turns the preset into Custom; privacy settings aren't in presets.
-                if r.on_hover_text(format!(
-                    "Benefit: {}
-
-Trade-off: {}",
-                    info.benefit, info.drawback
-                ))
-                .changed()
-                    && !t.is_privacy()
-                {
-                    g.preset = Preset::Custom;
-                }
+                ui.label(RichText::new(info.title).color(TEXT))
+                    .on_hover_text(format!("Benefit: {}\n\nTrade-off: {}", info.benefit, info.drawback));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if backup && row_button(ui, true, "Revert").on_hover_text("Put back the value from before Kestrel changed it").clicked()
-                    {
-                        revert = Some(t);
-                    }
-                    match unsupported {
-                        Some(_) if not_needed => status(ui, Status::Ok, "Not needed"),
-                        Some(_) => status(ui, Status::Neutral, "Not available"),
-                        None if backup && !applied => status(ui, Status::Caution, "Changed back"),
-                        None if applied => status(ui, Status::Ok, "On"),
-                        None => status(ui, Status::Neutral, "Off"),
+                    let mut on = applied;
+                    let r = ui.add_enabled_ui(unsupported.is_none() && !outside && !busy, |ui| toggle(ui, &mut on)).inner;
+                    let r = if outside {
+                        r.on_disabled_hover_text(
+                            "Already on, set outside Kestrel. Kestrel only turns off what it turned on; change it in Windows.",
+                        )
+                    } else {
+                        r
                     };
+                    if r.changed() {
+                        flipped = Some((t, on));
+                    }
+                    let note = match unsupported {
+                        Some(_) if not_needed => Some((Status::Ok, "Not needed")),
+                        Some(_) => Some((Status::Neutral, "Not available")),
+                        None if backup && !applied => Some((Status::Caution, "Changed back")),
+                        None => None,
+                    };
+                    if let Some((kind, text)) = note {
+                        ui.add_space(S3);
+                        status(ui, kind, text);
+                    }
                 });
             });
             // Description under the name, kept to a readable width.
-            ui.horizontal(|ui| {
-                ui.add_space(26.0);
-                ui.vertical(|ui| {
-                    ui.set_max_width((ui.available_width() - CONTROL_COL + 60.0).max(240.0));
-                    ui.label(RichText::new(unsupported.as_deref().unwrap_or(info.purpose)).size(CAPTION).color(TEXT_2));
-                });
+            ui.vertical(|ui| {
+                ui.set_max_width((ui.available_width() - CONTROL_COL + 60.0).max(240.0));
+                ui.label(RichText::new(unsupported.as_deref().unwrap_or(info.purpose)).size(CAPTION).color(TEXT_2));
             });
         });
     }
-    revert
+    flipped
 }
 
 fn restore_all_confirm() -> Confirm {

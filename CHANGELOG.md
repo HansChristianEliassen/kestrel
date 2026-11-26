@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.26.0: NVIDIA per-game settings
+- **Two NVIDIA switches on each game's page (Games > the game > Game Mode):**
+  - **Prefer maximum performance:** NVIDIA's Power management mode for just this game, so light or processor-heavy games don't stutter when the card clocks down. A small effect, and the card uses more power while you play; per game, so it doesn't stay at full speed on the desktop as the global setting would.
+  - **Low latency mode:** Low Latency Mode = On (at most one frame prepared ahead), which cuts input lag when the graphics card is the limit. DirectX 11 and older games only; for games with NVIDIA Reflex, Reflex is the better choice.
+  - Written to the game's own NVIDIA driver profile, the same one the NVIDIA Control Panel shows under Program settings (NVIDIA's profile for the game when it has one; otherwise Kestrel creates one). The value before is saved first; turning a switch off, or Settings > Restore everything, puts it back and removes a profile Kestrel created.
+- **Not added, with reasons:** Low Latency Mode "Ultra" (NVIDIA doesn't publish its setting), texture filtering "High performance" (no measurable gain on current cards), threaded optimization (OpenGL only), and forced V-Sync or frame limits (they depend on your G-SYNC setup and preference).
+- The GPU page points to the per-game settings.
+- **Switches instead of tick boxes:** every setting on Windows, GPU, Network, Controller & input, Privacy and Services, and the per-game switches, is now an On/Off switch that takes effect when you flip it, instead of ticking settings and pressing Apply. Turning a switch off puts back the value saved before Kestrel changed it (what the Revert button did). A setting that was already on before Kestrel shows On and can only be changed in Windows, since Kestrel doesn't know its earlier value. A message appears only when something fails or needs a restart. Lists you pick from before confirming (Set up this PC, profiles, app updates, clean test, files to delete) keep tick boxes.
+
 ## 0.25.0: New layout and network test
 A flat sidebar with one page per area, modeled on HD OPTI's layout, and a connection test.
 - **Sidebar:** Home, Game Mode, Windows, GPU, Network, Controller & input, Games, Clean up & health, Apps and Tools, with Settings at the bottom. The menu button next to the logo collapses it to icons (names show on hover).

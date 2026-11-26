@@ -12,7 +12,15 @@ Done so far:
 - 0.22 "Clean test": a temporary, reviewed clean boot to rule out other software, measured with Measure.
 - 0.23 "Profiles and System analysis": Balanced / Competitive / Extreme profiles across settings, services and tasks; System analysis with a baseline; detection of other optimizers; service grouping; more diagnostic services.
 - 0.24 "Resizable BAR and MPO": a Resizable BAR check for supported cards and NVIDIA's MPO fix as an opt-in setting.
-- 0.25 "New layout": a flat HD OPTI-style sidebar with GPU, Network, Controller & input and Tools pages, a sidebar Game Mode switch, a status bar, and a network test (ping, jitter, loss to the router and the internet). Next: an input polling-rate test and USB port check, then NVIDIA driver settings.
+- 0.25 "New layout": a flat HD OPTI-style sidebar with GPU, Network, Controller & input and Tools pages, a sidebar Game Mode switch, a status bar, and a network test (ping, jitter, loss to the router and the internet).
+- 0.26 "NVIDIA per-game settings": Prefer maximum performance and Low latency mode per game, in the game's NVIDIA driver profile.
+
+Next releases:
+- 0.27 "Input test": mouse polling rate (Raw Input events per second while moving the mouse, and how steady they are) and controller packet rate (XInput) on Controller & input. Read-only.
+- 0.28 "More games": game-settings presets for Counter-Strike 2 and Cyberpunk 2077 (one calibration run each), RDR2 DLSS values once verified.
+- 0.29 "AMD": the same per-game switches for AMD cards through ADLX (Anti-Lag, Radeon Chill off) and AMD's shader cache.
+- Research first: per-game server ping on the Network page; a DPC latency check in Tools.
+- Skipped from HD OPTI: controller overclocking (hidusbf), forced MSI mode, NIC tuning, USB port check.
 
 ## Custom-OS parity plan (from the KernelOS/xOS teardown, November 2026)
 Goal: reach what KernelOS, xOS and AtlasOS do on an official install, keeping only changes with a technical justification, each detected, reversible and honest about its cost.

@@ -22,7 +22,7 @@ pub struct Game {
     pub exes: Vec<String>,
     pub chosen: usize,
     /// (on, changed by Kestrel) per `GameSetting::ALL`, for the chosen exe.
-    pub status: [(bool, bool); 3],
+    pub status: [(bool, bool); GameSetting::ALL.len()],
 }
 
 impl Game {

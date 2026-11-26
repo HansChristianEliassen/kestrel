@@ -113,33 +113,28 @@ impl App {
             }
         }
 
-        section(ui, "Windows switches for this game", |_| {});
+        section(ui, "Switches for this game", |_| {});
         let mut error = None;
         let game = &mut self.gaming.games[i];
         group(ui, |ui| {
-            row(ui, 0, |ui| {
-                for (n, s) in GameSetting::ALL.into_iter().enumerate() {
-                    let (on, by_kestrel) = game.status[n];
-                    let mut want = on;
-                    let why = s.unsupported(build);
-                    let mut hint = s.desc().to_string();
-                    if on && !by_kestrel {
-                        hint.push_str("\n\nSet outside Kestrel (in Windows or by another app). Turning it off returns this game to the Windows default.");
-                    }
-                    let r = ui.add_enabled_ui(why.is_none(), |ui| checkbox(ui, &mut want, s.label())).inner.on_hover_text(hint);
-                    let r = match why {
-                        Some(w) => r.on_disabled_hover_text(w),
-                        None => r,
-                    };
-                    if r.changed() {
+            for (n, s) in GameSetting::ALL.into_iter().enumerate() {
+                let (on, by_kestrel) = game.status[n];
+                let mut want = on;
+                let why = s.unsupported(build);
+                let mut desc = why.unwrap_or(s.desc()).to_string();
+                if on && !by_kestrel {
+                    desc.push_str(" Set outside Kestrel (in Windows, the NVIDIA Control Panel or another app); turning it off returns this game to the default.");
+                }
+                setting_row(ui, n, RichText::new(s.label()).color(TEXT), &desc, |ui| {
+                    if ui.add_enabled_ui(why.is_none(), |ui| toggle(ui, &mut want)).inner.changed() {
                         let exe = game.exe().to_string();
                         if let Err(e) = if want { s.apply(&exe) } else { s.undo(&exe) } {
                             error = Some(e);
                         }
                         game.refresh();
                     }
-                }
-            });
+                });
+            }
         });
         ui.add_space(S2);
         caption(ui, "Takes effect the next time the game starts.");

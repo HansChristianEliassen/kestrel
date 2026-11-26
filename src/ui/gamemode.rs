@@ -81,7 +81,7 @@ impl App {
                 setting_row_note(ui, i, None, RichText::new(a.label()).color(TEXT), a.desc(), a.warning(), |ui| {
                     if profile == Profile::Custom {
                         let mut on = custom.contains(&a);
-                        if checkbox(ui, &mut on, "").changed() {
+                        if toggle(ui, &mut on).changed() {
                             custom.retain(|x| *x != a);
                             if on {
                                 custom.push(a);

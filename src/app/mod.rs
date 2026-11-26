@@ -87,7 +87,7 @@ impl App {
             sidebar_collapsed: false,
             net: NetTestState::default(),
             clean: CleanTestState { active: crate::cleantest::active_counts(), ..Default::default() },
-            gaming: GamingState { selected: preset_selection(Preset::Balanced, build), ..Default::default() },
+            gaming: GamingState::default(),
             opt: OptState::default(),
             gamemode: GameModeState::default(),
             history: String::new(),
@@ -742,7 +742,6 @@ impl App {
             Action::UpdateApps(apps) => self.start_app_queue(ctx, apps, false),
             Action::InstallApps(apps) => self.start_app_queue(ctx, apps, true),
             Action::ApplyProfile(items) => self.profile.apply.start(ctx, move || crate::optimizer::profiles::apply(&items)),
-            Action::ApplyServices(rows) => self.services.apply.start(ctx, move || rows.iter().flat_map(crate::services::apply).collect()),
             Action::InstallDrivers(drivers) => {
                 let ids: Vec<String> = drivers.iter().map(|d| d.id.clone()).collect();
                 self.upgrades.drivers_selected.clear();
@@ -1023,14 +1022,10 @@ impl App {
             }
         }
         if let Some(list) = self.services.load.poll() {
-            if self.services.list.is_empty() {
-                let recommended = list.iter().filter(|c| c.group == crate::services::Group::Recommended && !c.applied());
-                self.services.selected = recommended.map(|c| c.id()).collect();
-            }
             self.services.list = list;
         }
         if let Some(lines) = self.services.apply.poll() {
-            if !lines.is_empty() {
+            if lines.iter().any(|l| !l.starts_with('✔')) {
                 self.show_notice(
                     "Services",
                     lines.join(
@@ -1039,7 +1034,6 @@ impl App {
                     ),
                 );
             }
-            self.services.selected.clear();
             self.services.load.start(ctx, crate::services::candidates);
         }
         if let Some((i, result)) = self.startup.toggle.poll() {
@@ -1062,7 +1056,10 @@ impl App {
             }
         }
         if let Some(lines) = self.gaming.apply.poll() {
-            self.show_notice("Settings", lines.join("\n"));
+            // One switch that just worked needs no message; failures, notes ("(needs a restart)") and lists do.
+            if !matches!(&lines[..], [l] if l.starts_with('✔') && !l.ends_with(')')) {
+                self.show_notice("Settings", lines.join("\n"));
+            }
             self.clean.active = crate::cleantest::active_counts();
             self.refresh_gaming(ctx);
             self.gaming.games.iter_mut().for_each(|g| g.refresh());
@@ -1122,14 +1119,9 @@ impl App {
     }
 }
 
-/// Checkbox state for a preset, leaving out tweaks that do nothing on this Windows build.
-pub(crate) fn preset_selection(p: Preset, build: u32) -> [bool; Tweak::ALL.len()] {
-    Tweak::ALL.map(|t| p.includes(t) && t.unsupported(build).is_none())
-}
-
 /// One line per tweak. Settings that are already right or wouldn't do anything on this PC are reported
 /// as such and left alone, so the summary shows what really changed.
-fn apply_tweaks(tweaks: &[Tweak]) -> Vec<String> {
+pub(crate) fn apply_tweaks(tweaks: &[Tweak]) -> Vec<String> {
     tweaks
         .iter()
         .map(|t| {
@@ -1269,12 +1261,12 @@ mod tests {
 
     #[test]
     fn presets_use_power_mode_not_plan() {
-        let perf = preset_selection(Preset::Performance, 26200);
+        let perf = Tweak::ALL.map(|t| Preset::Performance.includes(t));
         assert!(perf[Tweak::PowerMode.index()] && perf[Tweak::GameMode.index()]);
         let off = [Tweak::HighPerfPower, Tweak::NoMouseAccel, Tweak::UsbSuspendOff, Tweak::NoTransparency, Tweak::NoAnimations];
         for t in off.into_iter().chain([Tweak::NoBackgroundApps]) {
             assert!(!perf[t.index()], "{t:?} should not be in a preset");
         }
-        assert!(!preset_selection(Preset::Balanced, 26200)[Tweak::PowerMode.index()]);
+        assert!(!Preset::Balanced.includes(Tweak::PowerMode));
     }
 }
