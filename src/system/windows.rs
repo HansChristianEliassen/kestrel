@@ -96,16 +96,6 @@ pub fn service_running(name: &str) -> bool {
 /// Launches `file` through the shell (UAC prompts are handled by Windows).
 /// With `wait`, waits for it to exit (or for the flag to be set) and returns the exit code.
 pub fn shell_execute(file: &str, params: &str, elevate: bool, wait: Option<&AtomicBool>) -> Result<u32, String> {
-    launch(file, params, elevate, wait, true)
-}
-
-/// `shell_execute` without a window (for console tools and scripts).
-pub fn shell_execute_hidden(file: &str, params: &str, elevate: bool, wait: Option<&AtomicBool>) -> Result<u32, String> {
-    launch(file, params, elevate, wait, false)
-}
-
-fn launch(file: &str, params: &str, elevate: bool, wait: Option<&AtomicBool>, show: bool) -> Result<u32, String> {
-    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
     let (f, p) = (wide(file), wide(params));
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
@@ -113,7 +103,7 @@ fn launch(file: &str, params: &str, elevate: bool, wait: Option<&AtomicBool>, sh
         lpVerb: if elevate { w!("runas") } else { w!("open") },
         lpFile: PCWSTR(f.as_ptr()),
         lpParameters: PCWSTR(p.as_ptr()),
-        nShow: if show { SW_SHOWNORMAL.0 } else { SW_HIDE.0 },
+        nShow: SW_SHOWNORMAL.0,
         ..Default::default()
     };
     unsafe { ShellExecuteExW(&mut info) }.map_err(|e| e.message().to_string())?;

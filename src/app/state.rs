@@ -116,7 +116,9 @@ pub struct DriverState {
     pub keep: std::collections::BTreeSet<String>,
     pub clean: bool,
     /// Build and install: (installer exit code, folders left out).
-    pub install: Job<Result<Option<crate::nvdriver::install::Pending>, String>>,
+    pub install: Job<Result<(), String>>,
+    /// NVIDIA's installer is running (Kestrel was reopened, or opened, before it finished).
+    pub waiting: bool,
     /// Install options, both on unless switched off.
     pub no_block: bool,
     pub no_profile: bool,

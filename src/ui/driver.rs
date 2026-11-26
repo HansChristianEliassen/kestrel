@@ -31,10 +31,20 @@ impl App {
         }
         if let Some(r) = d.install.poll() {
             match r {
-                Ok(Some(pending)) => self.driver_check(ctx, pending),
-                // The script reopens Kestrel when it's done; nothing to report here.
-                Ok(None) => {}
+                // NVIDIA's OpenGL driver would close Kestrel mid-install anyway; close cleanly now. The install
+                // window explains what's happening, and its script opens Kestrel again when it's done.
+                Ok(()) => std::process::exit(0),
                 Err(e) => self.driver.outcome = Some(Err(e)),
+            }
+        }
+        if self.driver.waiting {
+            match install::install_state() {
+                install::InstallState::Running => ctx.request_repaint_after(std::time::Duration::from_secs(2)),
+                install::InstallState::Done(p) => {
+                    self.driver.waiting = false;
+                    self.driver_check(ctx, p);
+                }
+                install::InstallState::Idle => self.driver.waiting = false,
             }
         }
         let d = &mut self.driver;
@@ -79,10 +89,13 @@ impl App {
     /// Shows how an install went, finishes it (telemetry block, gaming profile, rollback copy) and checks it.
     pub(crate) fn driver_check(&mut self, ctx: &egui::Context, p: install::Pending) {
         let d = &mut self.driver;
+        // Look the card up again: the driver changed (or is missing).
+        d.gpu = None;
+        d.kept_now = None;
         d.outcome = Some(match p.code {
             Some(0) => Ok(format!("NVIDIA's installer finished: driver {}.", p.version)),
             Some(c) => Err(format!("NVIDIA's installer ended with code {c}. The results below show what changed.")),
-            None => Err("NVIDIA's installer didn't report back. The results below show what's installed now.".into()),
+            None => Err("The install was interrupted (for example by a restart) before NVIDIA's installer finished. The results below show what's installed now; if the driver is missing, install it again below.".into()),
         });
         d.verify.start(ctx, move || install::after_install(&p));
     }
@@ -153,8 +166,17 @@ impl App {
             self.driver.no_profile = crate::optimizer::hardware::has_battery();
         }
         self.driver_poll(&ctx);
+        if self.driver.waiting {
+            info_bar(
+                ui,
+                Status::Caution,
+                "NVIDIA's installer is still running. Don't restart or turn off the PC; this page updates when it's done.",
+                |ui| progress(ui, "Installing"),
+            );
+            ui.add_space(S3);
+        }
         let Some(Some(gpu)) = self.driver.gpu.clone() else {
-            group(ui, |ui| empty_state(ui, "No NVIDIA graphics card", "Driver Optimizer works with NVIDIA graphics cards."));
+            self.driver_missing(ui);
             return;
         };
         if self.driver.list.is_none() && !self.driver.releases.running() {
@@ -228,7 +250,7 @@ impl App {
             self.driver.rollback = Some(v.clone());
             self.confirm = Some(Confirm {
                 title: format!("Go back to NVIDIA driver {v}?"),
-                body: "Reinstalls the stripped driver Kestrel kept. The screen goes dark for a moment while the driver changes. Windows may ask for administrator rights.".into(),
+                body: format!("Reinstalls the stripped driver Kestrel kept.\n\n{INSTALL_NOTE}"),
                 warning: None,
                 ok: "Reinstall",
                 action: Action::InstallNvDriver,
@@ -496,10 +518,14 @@ impl App {
             self.confirm = Some(Confirm {
                 title: format!("Install NVIDIA driver {}?", pkg.version),
                 body: format!(
-                    "{}: left out are {}.\n\nThe screen goes dark for a moment while the driver changes. Windows may ask for administrator rights.{}",
+                    "{}: left out are {}.\n\n{INSTALL_NOTE}{}",
                     self.driver.preset.label(),
                     if removed.is_empty() { "no components".to_string() } else { removed.join(", ") },
-                    if self.driver.clean { "\n\nClean installation resets your NVIDIA Control Panel settings." } else { "" }
+                    if self.driver.clean {
+                        "\n\nClean installation removes the current driver first, so the PC is without one for longer, and resets your NVIDIA Control Panel settings."
+                    } else {
+                        ""
+                    }
                 ),
                 warning: None,
                 ok: "Install",
@@ -519,6 +545,54 @@ impl App {
                 });
             }
         }
+    }
+
+    /// No NVIDIA driver in Windows (an interrupted install, or none yet): offer the driver Kestrel kept.
+    fn driver_missing(&mut self, ui: &mut Ui) {
+        let kept = self.driver.kept_now.clone().unwrap_or_default();
+        if kept.is_empty() {
+            group(ui, |ui| {
+                empty_state(
+                    ui,
+                    "No NVIDIA graphics driver",
+                    "Driver Optimizer works with NVIDIA graphics cards. If yours is installed but has no driver, Windows Update installs one, or install NVIDIA's driver from nvidia.com.",
+                )
+            });
+        } else {
+            let busy = self.driver.install.running() || self.driver.waiting;
+            let mut again = None;
+            group(ui, |ui| {
+                for (i, (v, _, bytes)) in kept.iter().enumerate() {
+                    setting_row_note(
+                        ui,
+                        i,
+                        Some(Status::Caution),
+                        RichText::new(format!("No NVIDIA driver is installed. Install {v} again?")).color(TEXT),
+                        &format!(
+                            "Kestrel kept this stripped driver ({}). Installing it again restores your graphics driver.",
+                            fmt_bytes(*bytes)
+                        ),
+                        None,
+                        |ui| {
+                            if row_button(ui, !busy, "Install").clicked() {
+                                again = Some(v.clone());
+                            }
+                        },
+                    );
+                }
+            });
+            if let Some(v) = again {
+                self.driver.rollback = Some(v.clone());
+                self.confirm = Some(Confirm {
+                    title: format!("Install NVIDIA driver {v}?"),
+                    body: INSTALL_NOTE.to_string(),
+                    warning: None,
+                    ok: "Install",
+                    action: Action::InstallNvDriver,
+                });
+            }
+        }
+        self.driver_results(ui);
     }
 
     /// How the last install or export went, and what's true after installing.
@@ -565,6 +639,9 @@ impl App {
         }
     }
 }
+
+/// What happens during an install, said before it starts.
+const INSTALL_NOTE: &str = "Kestrel closes and a window shows the install for a few minutes. The screen may go dark or flicker, and for a while Windows shows no graphics driver: that's normal. Don't restart or turn off the PC until the window closes; Kestrel then opens again with the result. Windows may ask for administrator rights first.";
 
 enum Source {
     Download(nvdriver::Release),

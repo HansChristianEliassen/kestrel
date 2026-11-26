@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.28.1: Safer driver installs
+A driver install from the Driver Optimizer looked like a crash: Kestrel disappeared, and with clean installation on, Windows showed no graphics driver for a few minutes while NVIDIA's installer kept working out of sight. Restarting at that moment could really leave the PC without a driver.
+- **A visible install window:** NVIDIA's installer now runs in a window that says what's happening, that a missing driver for a while is normal, and not to restart or turn off the PC until it closes. Kestrel opens again with the result, as before.
+- **Kestrel closes itself first:** NVIDIA's OpenGL driver ends OpenGL programs like Kestrel while the display driver restarts. Kestrel now closes cleanly right after starting the installer instead of being killed. The confirmation says this before you start.
+- **Opened mid-install:** Kestrel says NVIDIA's installer is still running, and updates when it's done.
+- **Interrupted installs:** if the PC restarted or the installer stopped before finishing, Kestrel says so. If Windows has no NVIDIA driver left, the Driver Optimizer offers to install the driver it kept again, instead of saying there's no NVIDIA card.
+- The clean installation option now warns that the PC is without a driver for longer.
+
 ## 0.28.0: One NVIDIA gaming profile, no telemetry
 - **NVIDIA gaming profile (GPU > Settings):** one profile in the driver's global settings that covers every game, instead of settings per game:
   - Prefer maximum performance;

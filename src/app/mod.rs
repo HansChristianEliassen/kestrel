@@ -1196,10 +1196,18 @@ impl eframe::App for App {
         // A driver install that finished while Kestrel was closed (NVIDIA's OpenGL driver closes it mid-install).
         if !self.driver.pending_checked {
             self.driver.pending_checked = true;
-            if let Some(p) = crate::nvdriver::install::take_pending() {
-                self.gpu_tab = GpuTab::Driver;
-                self.go(Page::Gpu, ctx);
-                self.driver_check(ctx, p);
+            match crate::nvdriver::install::install_state() {
+                crate::nvdriver::install::InstallState::Done(p) => {
+                    self.gpu_tab = GpuTab::Driver;
+                    self.go(Page::Gpu, ctx);
+                    self.driver_check(ctx, p);
+                }
+                crate::nvdriver::install::InstallState::Running => {
+                    self.gpu_tab = GpuTab::Driver;
+                    self.go(Page::Gpu, ctx);
+                    self.driver.waiting = true;
+                }
+                crate::nvdriver::install::InstallState::Idle => {}
             }
         }
         self.poll(ctx);

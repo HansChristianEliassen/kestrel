@@ -3,13 +3,12 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
 
 use winreg::enums::HKEY_LOCAL_MACHINE;
 use winreg::RegKey;
 
 use crate::gamemode::watch::process_memory;
-use crate::system::{expand_env, process_list, service_state, shell_execute_hidden};
+use crate::system::{expand_env, process_list, service_state, shell_execute};
 use crate::utils::{data_dir, log};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -165,13 +164,15 @@ impl Pending {
     }
 }
 
-/// Runs NVIDIA's installer on a package folder, silently, after saving the current footprint. Windows asks for
-/// administrator rights when Kestrel doesn't have them.
+/// Starts NVIDIA's installer on a package folder, after saving the current footprint. Windows asks for
+/// administrator rights when Kestrel doesn't have them. Returns once the installer has started.
 ///
 /// NVIDIA's OpenGL driver ends every OpenGL program (Kestrel included) when the graphics card disconnects during
-/// the swap, so the installer runs from a small script that records its exit code and opens Kestrel again on
-/// the Driver Optimizer, which then finishes the job (`take_pending`, `after_install`).
-pub fn install(dir: &Path, clean: bool, job: &Pending) -> Result<Option<Pending>, String> {
+/// the swap, and with a clean installation the old driver is gone for minutes before the new one is in. So the
+/// installer runs from a small script in a visible window that says what's happening and not to restart; the
+/// script records the exit code and opens Kestrel again on the Driver Optimizer, which finishes the job
+/// (`install_state`, `after_install`). Kestrel closes itself right after starting it instead of being killed.
+pub fn install(dir: &Path, clean: bool, job: &Pending) -> Result<(), String> {
     let setup = dir.join("setup.exe");
     if !setup.is_file() {
         return Err("The driver package is missing; build it again.".into());
@@ -181,44 +182,61 @@ pub fn install(dir: &Path, clean: bool, job: &Pending) -> Result<Option<Pending>
     std::fs::write(pending_path(), job.to_text()).map_err(|e| e.to_string())?;
     let args = if clean { "-s -noreboot -noeula -clean" } else { "-s -noreboot -noeula" };
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
-    let script = format!(
-        "@echo off\r\n\"{}\" {args}\r\n> \"{}\" echo %ERRORLEVEL%\r\nstart \"\" \"{}\" {} {}driver\r\n",
-        setup.display(),
-        result_path().display(),
-        me.display(),
-        crate::system::RELAUNCHED,
-        crate::system::PAGE_ARG
-    );
+    let v = &job.version;
+    let script = [
+        "@echo off".to_string(),
+        format!("title Kestrel - installing NVIDIA driver {v}"),
+        "echo.".into(),
+        format!("echo   Installing NVIDIA driver {v}. This takes a few minutes."),
+        "echo.".into(),
+        "echo   The screen may go dark or flicker, and for a while Windows shows no graphics driver.".into(),
+        "echo   That's normal during the install. DON'T restart or turn off the PC until this window closes.".into(),
+        "echo.".into(),
+        "echo   Kestrel opens again by itself when NVIDIA's installer is done.".into(),
+        format!("\"{}\" {args}", setup.display()),
+        format!("> \"{}\" echo %ERRORLEVEL%", result_path().display()),
+        format!("start \"\" \"{}\" {} {}driver", me.display(), crate::system::RELAUNCHED, crate::system::PAGE_ARG),
+        String::new(),
+    ]
+    .join("\r\n");
     let cmd = data_dir().join("nvidia-install.cmd");
     std::fs::write(&cmd, script).map_err(|e| e.to_string())?;
     log(&format!("NVIDIA driver: installing {} ({args})", dir.display()));
-    let never = AtomicBool::new(false);
-    shell_execute_hidden("cmd.exe", &format!("/c \"\"{}\"\"", cmd.display()), true, Some(&never)).map_err(|e| {
+    shell_execute("cmd.exe", &format!("/c \"\"{}\"\"", cmd.display()), true, None).map_err(|e| {
         let _ = std::fs::remove_file(pending_path());
         format!("NVIDIA's installer didn't start: {e}")
     })?;
-    // Still running: the display driver didn't restart (or Kestrel survived it). Finish now.
-    Ok(take_pending())
+    Ok(())
 }
 
-/// The install the script finished (or one that never reported back within an hour), once.
-pub fn take_pending() -> Option<Pending> {
-    let text = std::fs::read_to_string(pending_path()).ok()?;
+/// Where the last install stands.
+pub enum InstallState {
+    /// Nothing pending.
+    Idle,
+    /// NVIDIA's installer is still working.
+    Running,
+    /// Finished (with its exit code), or interrupted (no code: a restart or a closed window stopped it).
+    Done(Pending),
+}
+
+/// Whether an install is running, finished or was interrupted. A finished or interrupted one is reported once.
+pub fn install_state() -> InstallState {
+    let Ok(text) = std::fs::read_to_string(pending_path()) else { return InstallState::Idle };
     let code = std::fs::read_to_string(result_path()).ok().and_then(|t| t.trim().parse().ok());
-    let stale = std::fs::metadata(pending_path())
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.elapsed().ok())
-        .is_some_and(|e| e.as_secs() > 3600);
-    if code.is_none() && !stale {
-        return None;
+    if code.is_none() {
+        let age = std::fs::metadata(pending_path()).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+        // shortcut: any process named setup.exe counts as NVIDIA's installer; match its path if other installers confuse it.
+        let running = process_list().iter().any(|(_, n)| n == "setup.exe");
+        if running || age.is_some_and(|a| a.as_secs() < 30) {
+            return InstallState::Running;
+        }
     }
     let _ = std::fs::remove_file(pending_path());
     let _ = std::fs::remove_file(result_path());
-    let mut p = Pending::from_text(&text)?;
+    let Some(mut p) = Pending::from_text(&text) else { return InstallState::Idle };
     p.code = code;
-    log(&format!("NVIDIA driver: installer for {} finished with code {code:?}", p.version));
-    Some(p)
+    log(&format!("NVIDIA driver: installer for {} ended with code {code:?}", p.version));
+    InstallState::Done(p)
 }
 
 /// Stripped packages kept for rollback.
