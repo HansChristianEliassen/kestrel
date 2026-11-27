@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.31.0: For older graphics cards
+Researched for an RTX 2070 SUPER and other older cards, keeping only what testing shows works.
+- **Measure warns when graphics memory is full:** Kestrel records the card's peak memory use during the 60-second measurement. At 90% or more, the first piece of advice is to lower Texture quality one step, which often frees 1 to 2 GB with little visible difference. On 8 GB cards this is the most common cause of hitches in recent games.
+- **Measure warns when an NVIDIA card overheats:** through NVIDIA's own monitoring library (NVML, part of the driver), Kestrel records how often the card slowed itself down because of heat, and its top temperature. Hitting the power limit is normal under load, so only heat slowdown counts. At 10% of the measurement or more, the advice says what helps: clean the dust out, check the case fans, set a steeper fan curve or a lower power limit in MSI Afterburner, or replace the thermal paste on older cards. Kestrel doesn't change clocks or voltages itself.
+- **DLSS in Performance mode on RTX 20 and 30 cards also sets DLSS Preset K.** The newer DLSS 4.5 models (M and L) are 14 to 24% slower on those cards. Preset K's value (`0x0B`) comes from NVIDIA Profile Inspector users, not NVIDIA's documentation.
+- **The NVIDIA gaming profile caps games in the background at 30 FPS** (the Control Panel's Background Application Max Frame Rate), so the card cools down while you're alt-tabbed. Turn the profile on again to add it.
+- Left out on purpose, as placebo or risky:
+  - registry "FPS boost" lists and game-booster apps;
+  - MSI mode and interrupt tweaks;
+  - unofficial Smooth Motion or Frame Generation mods for RTX 20 cards (they inject into games, which risks anti-cheat bans);
+  - flashing a modified BIOS for Resizable BAR on RTX 20;
+  - automatic overclocking or undervolting.
+
 ## 0.30.0: Max FPS switches
 **GPU > Settings > Max FPS:** the NVIDIA Profile Inspector settings that raise FPS, as switches. Each one is off by default, states its cost, is saved first and reverted like any other setting, and shows only on cards that support it.
 - **Resizable BAR in every game** (RTX 30 and newer, with Resizable BAR on in the BIOS). NVIDIA enables it only for games it has tested. One 12-game test measured about 7% more average FPS and better 1% lows, over 20% in some games; a few games run slower.

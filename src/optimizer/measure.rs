@@ -23,6 +23,12 @@ pub struct Stats {
     pub gpu_busy_pct: Option<f64>,
     /// The frame rate is held at this limit (V-Sync or a frame limiter), if it is.
     pub capped_at: Option<u32>,
+    /// Peak use of the graphics card's own memory while measuring, and how much it has: (used, total) in bytes.
+    /// None when Windows doesn't report it, or for results loaded from history.
+    pub vram: Option<(u64, u64)>,
+    /// NVIDIA cards: how often the card slowed itself down because of heat while measuring (percent of samples)
+    /// and the highest temperature (°C). None for other cards and for results loaded from history.
+    pub heat: Option<(u32, u32)>,
 }
 
 /// Common frame-rate limits: refresh rates and round limiter values.
@@ -72,7 +78,145 @@ pub fn stats(csv: &str) -> Option<Stats> {
         stutter_pct: 100.0 * stutters as f64 / frames as f64,
         gpu_busy_pct,
         capped_at,
+        vram: None,
+        heat: None,
     })
+}
+
+/// The dedicated graphics card's memory use, from Windows' "GPU Adapter Memory" counters (system-wide, so
+/// apps next to the game count too: what matters is whether the card is full).
+struct Vram {
+    query: isize,
+    counter: isize,
+    /// The counter instance prefix for this card, like "luid_0x00000000_0x0001411e".
+    card: String,
+    total: u64,
+}
+
+impl Vram {
+    fn open() -> Option<Vram> {
+        use windows::Win32::System::Performance::{PdhAddEnglishCounterW, PdhOpenQueryW};
+        let (card, total) = dedicated_card()?;
+        let mut v = Vram { query: 0, counter: 0, card, total };
+        unsafe {
+            if PdhOpenQueryW(windows::core::PCWSTR::null(), 0, &mut v.query) != 0 {
+                return None;
+            }
+            // The English name works on every Windows language.
+            (PdhAddEnglishCounterW(v.query, windows::core::w!(r"\GPU Adapter Memory(*)\Dedicated Usage"), 0, &mut v.counter) == 0)
+                .then_some(v)
+        }
+    }
+
+    /// Bytes in use on the card now.
+    fn sample(&self) -> Option<u64> {
+        use windows::Win32::System::Performance::*;
+        unsafe {
+            if PdhCollectQueryData(self.query) != 0 {
+                return None;
+            }
+            let (mut size, mut count) = (0u32, 0u32);
+            PdhGetFormattedCounterArrayW(self.counter, PDH_FMT_LARGE, &mut size, &mut count, None);
+            // The items are followed by their names in the same buffer; u64 keeps it aligned for the items.
+            let mut buf = vec![0u64; (size as usize).div_ceil(8).max(1)];
+            let items = buf.as_mut_ptr() as *mut PDH_FMT_COUNTERVALUE_ITEM_W;
+            if PdhGetFormattedCounterArrayW(self.counter, PDH_FMT_LARGE, &mut size, &mut count, Some(items)) != 0 {
+                return None;
+            }
+            std::slice::from_raw_parts(items, count as usize)
+                .iter()
+                .filter(|i| i.szName.to_string().is_ok_and(|n| n.to_lowercase().starts_with(&self.card)))
+                .map(|i| i.FmtValue.Anonymous.largeValue.max(0) as u64)
+                .max()
+        }
+    }
+}
+
+impl Drop for Vram {
+    fn drop(&mut self) {
+        if self.query != 0 {
+            unsafe { windows::Win32::System::Performance::PdhCloseQuery(self.query) };
+        }
+    }
+}
+
+/// Why an NVIDIA card is slowing down, through NVML (nvml.dll, which comes with NVIDIA's driver).
+struct Nvml {
+    device: *mut std::ffi::c_void,
+    reasons: unsafe extern "C" fn(*mut std::ffi::c_void, *mut u64) -> i32,
+    temperature: unsafe extern "C" fn(*mut std::ffi::c_void, u32, *mut u32) -> i32,
+    shutdown: unsafe extern "C" fn() -> i32,
+}
+
+/// nvmlClocksEventReasons that mean the card is slowing down because of heat: software thermal slowdown,
+/// hardware thermal slowdown, and hardware slowdown (clocks at least halved). The power-limit reason isn't one:
+/// every card hits it under full load, which is how boost works.
+const HEAT_REASONS: u64 = 0x20 | 0x40 | 0x08;
+
+impl Nvml {
+    fn open() -> Option<Nvml> {
+        use windows::core::{s, w};
+        use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32};
+        unsafe {
+            let lib = LoadLibraryExW(w!("nvml.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32).ok()?;
+            let init: unsafe extern "C" fn() -> i32 = std::mem::transmute(GetProcAddress(lib, s!("nvmlInit_v2"))?);
+            let handle: unsafe extern "C" fn(u32, *mut *mut std::ffi::c_void) -> i32 =
+                std::mem::transmute(GetProcAddress(lib, s!("nvmlDeviceGetHandleByIndex_v2"))?);
+            // The newer name first; drivers before 535 only have the older one.
+            let reasons = GetProcAddress(lib, s!("nvmlDeviceGetCurrentClocksEventReasons"))
+                .or_else(|| GetProcAddress(lib, s!("nvmlDeviceGetCurrentClocksThrottleReasons")))?;
+            type Reasons = unsafe extern "C" fn(*mut std::ffi::c_void, *mut u64) -> i32;
+            type Temperature = unsafe extern "C" fn(*mut std::ffi::c_void, u32, *mut u32) -> i32;
+            type Shutdown = unsafe extern "C" fn() -> i32;
+            let reasons: Reasons = std::mem::transmute(reasons);
+            let temperature: Temperature = std::mem::transmute(GetProcAddress(lib, s!("nvmlDeviceGetTemperature"))?);
+            let shutdown: Shutdown = std::mem::transmute(GetProcAddress(lib, s!("nvmlShutdown"))?);
+            if init() != 0 {
+                return None;
+            }
+            let mut device = std::ptr::null_mut();
+            if handle(0, &mut device) != 0 {
+                shutdown();
+                return None;
+            }
+            // Built only now: dropping an Nvml shuts NVML down.
+            Some(Nvml { device, reasons, temperature, shutdown })
+        }
+    }
+
+    /// (slowing down because of heat right now, temperature in °C).
+    fn sample(&self) -> Option<(bool, u32)> {
+        let (mut reasons, mut temp) = (0u64, 0u32);
+        unsafe {
+            if (self.reasons)(self.device, &mut reasons) != 0 || (self.temperature)(self.device, 0, &mut temp) != 0 {
+                return None;
+            }
+        }
+        Some((reasons & HEAT_REASONS != 0, temp))
+    }
+}
+
+impl Drop for Nvml {
+    fn drop(&mut self) {
+        unsafe { (self.shutdown)() };
+    }
+}
+
+/// The card with the most dedicated memory (at least 1 GB, so not a processor's graphics): (counter instance
+/// prefix, bytes).
+fn dedicated_card() -> Option<(String, u64)> {
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE};
+    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }.ok()?;
+    (0..)
+        .map_while(|i| unsafe { factory.EnumAdapters1(i) }.ok())
+        .filter_map(|a| unsafe { a.GetDesc1() }.ok())
+        .filter(|d| d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0 && d.DedicatedVideoMemory >= 1 << 30)
+        .max_by_key(|d| d.DedicatedVideoMemory)
+        .map(|d| (luid_prefix(d.AdapterLuid.HighPart as u32, d.AdapterLuid.LowPart), d.DedicatedVideoMemory as u64))
+}
+
+fn luid_prefix(high: u32, low: u32) -> String {
+    format!("luid_0x{high:08x}_0x{low:08x}")
 }
 
 /// Records `exe` (file name of a running game) for `SECONDS`. Needs administrator rights (or the Performance Log
@@ -83,16 +227,38 @@ pub fn capture(exe: &str) -> Result<Stats, String> {
     let csv = data_dir().join("measure.csv");
     let _ = std::fs::remove_file(&csv);
     let secs = SECONDS.to_string();
-    let out = std::process::Command::new(tool)
+    use std::process::Stdio;
+    let mut child = std::process::Command::new(tool)
         .args(["--process_name", exe, "--output_file"])
         .arg(&csv)
         .args(["--timed", &secs, "--terminate_after_timed", "--no_console_stats", "--session_name", "Kestrel", "--stop_existing_session"])
         .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("Couldn't start PresentMon: {e}"))?;
+    // Graphics memory and (NVIDIA) heat slowdown are sampled while PresentMon records, so they match the frames.
+    let vram = Vram::open();
+    let nvml = Nvml::open();
+    let mut peak = None;
+    let (mut samples, mut hot, mut max_temp) = (0u32, 0u32, 0u32);
+    while matches!(child.try_wait(), Ok(None)) {
+        if let Some(used) = vram.as_ref().and_then(Vram::sample) {
+            peak = Some(peak.unwrap_or(0).max(used));
+        }
+        if let Some((slowed, temp)) = nvml.as_ref().and_then(Nvml::sample) {
+            samples += 1;
+            hot += u32::from(slowed);
+            max_temp = max_temp.max(temp);
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    let heat = (samples > 0).then(|| (100 * hot / samples, max_temp));
+    let out = child.wait_with_output().map_err(|e| format!("PresentMon failed: {e}"))?;
     let text = std::fs::read_to_string(&csv).unwrap_or_default();
     let _ = std::fs::remove_file(&csv);
-    stats(&text).ok_or_else(|| {
+    stats(&text).map(|s| Stats { vram: peak.zip(vram.map(|v| v.total)), heat, ..s }).ok_or_else(|| {
         let err = String::from_utf8_lossy(&out.stderr).to_lowercase() + &String::from_utf8_lossy(&out.stdout).to_lowercase();
         if err.contains("access denied") {
             "Measuring needs administrator rights (Settings > Restart as administrator).".to_string()
@@ -129,6 +295,8 @@ pub fn parse_history(text: &str, exe: &str) -> Vec<(u64, Stats)> {
                     frames: f[5].parse().ok()?,
                     gpu_busy_pct: None,
                     capped_at: None,
+                    vram: None,
+                    heat: None,
                 },
             ))
         })
@@ -208,11 +376,55 @@ mod tests {
         let text = "game.exe\t100\t143.0\t97.0\t0.40\t8512\nother.exe\t101\t60.0\t50.0\t1.00\t3600\nbroken line\n";
         let h = parse_history(text, "GAME.EXE");
         assert_eq!(h.len(), 1);
-        assert_eq!(h[0].1, Stats { frames: 8512, avg_fps: 143.0, low_fps: 97.0, stutter_pct: 0.4, gpu_busy_pct: None, capped_at: None });
-        let now = Stats { frames: 9000, avg_fps: 157.3, low_fps: 107.0, stutter_pct: 0.2, gpu_busy_pct: None, capped_at: None };
+        assert_eq!(
+            h[0].1,
+            Stats {
+                frames: 8512,
+                avg_fps: 143.0,
+                low_fps: 97.0,
+                stutter_pct: 0.4,
+                gpu_busy_pct: None,
+                capped_at: None,
+                vram: None,
+                heat: None
+            }
+        );
+        let now = Stats {
+            frames: 9000,
+            avg_fps: 157.3,
+            low_fps: 107.0,
+            stutter_pct: 0.2,
+            gpu_busy_pct: None,
+            capped_at: None,
+            vram: None,
+            heat: None,
+        };
         assert_eq!(
             describe(&now, Some(&h[0].1)),
             "157 FPS average, 107 FPS 1% lows, 0.2% stutter (last time 143 / 97 FPS: +10% average, +10% 1% lows)"
         );
+    }
+
+    #[test]
+    fn luid_matches_counter_names() {
+        assert!("luid_0x00000000_0x0001411e_phys_0".starts_with(&luid_prefix(0, 0x1411E)));
+    }
+
+    #[test]
+    #[ignore = "reads this PC's NVIDIA card through NVML"]
+    fn live_nvml() {
+        let n = Nvml::open().expect("an NVIDIA driver");
+        let (mut r, mut t) = (0u64, 0u32);
+        let codes = unsafe { ((n.reasons)(n.device, &mut r), (n.temperature)(n.device, 0, &mut t)) };
+        println!("return codes {codes:?}, reasons {r:#x}, temperature {t}; sample {:?}", n.sample());
+    }
+
+    #[test]
+    #[ignore]
+    fn live_vram() {
+        let v = Vram::open().expect("no dedicated card or counter");
+        let used = v.sample().expect("no sample for the card");
+        eprintln!("{} : {used} of {} bytes", v.card, v.total);
+        assert!(used > 0 && used <= v.total + (1 << 30));
     }
 }

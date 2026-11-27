@@ -197,7 +197,47 @@ pub fn advise(exe: &str, build: u32, in_game_mode: bool, stats: &Stats) -> Advic
         }
     }
     manual.splice(0..0, first);
+    // A card that is full or overheating holds the game back whatever else limits it, so these go first.
+    if let Some(item) = overheating(stats) {
+        manual.insert(0, item);
+    }
+    if let Some(item) = vram_full(stats) {
+        manual.insert(0, item);
+    }
     Advice { auto, manual }
+}
+
+/// Advice when the graphics card's own memory was at least 90% full while measuring.
+fn vram_full(s: &Stats) -> Option<(String, String, Link)> {
+    let (used, total) = s.vram?;
+    if total == 0 || used * 10 < total * 9 {
+        return None;
+    }
+    let gb = |b: u64| b as f64 / (1u64 << 30) as f64;
+    Some((
+        "Graphics memory is almost full".into(),
+        format!(
+            "The game used {:.1} of the graphics card's {:.0} GB. When it fills up, textures spill into much slower system memory and the game hitches. Lower Texture quality one step in the game's settings (often frees 1 to 2 GB with little visible difference); ray tracing and frame generation use graphics memory too. Closing browsers and video apps next to the game also helps.",
+            gb(used),
+            gb(total)
+        ),
+        None,
+    ))
+}
+
+/// Advice when an NVIDIA card slowed itself down because of heat in at least a tenth of the measurement.
+fn overheating(s: &Stats) -> Option<(String, String, Link)> {
+    let (pct, temp) = s.heat?;
+    if pct < 10 {
+        return None;
+    }
+    Some((
+        "The graphics card slowed down because of heat".into(),
+        format!(
+            "It held back its speed to cool down during {pct}% of the measurement, at up to {temp} °C. That costs FPS and makes frame times uneven. Clean the dust out of the card and case and check the case fans. In MSI Afterburner, a steeper fan curve or a Power limit of 80 to 90% usually costs only a few percent of FPS and runs much cooler. Cards a few years old often need new thermal paste."
+        ),
+        None,
+    ))
 }
 
 /// Health findings that can cost frame rate or cause stutter (not the network or security status).
@@ -210,7 +250,16 @@ mod tests {
     use super::*;
 
     fn s(avg: f64, low: f64, stutter: f64) -> Stats {
-        Stats { frames: 1000, avg_fps: avg, low_fps: low, stutter_pct: stutter, gpu_busy_pct: None, capped_at: None }
+        Stats {
+            frames: 1000,
+            avg_fps: avg,
+            low_fps: low,
+            stutter_pct: stutter,
+            gpu_busy_pct: None,
+            capped_at: None,
+            vram: None,
+            heat: None,
+        }
     }
 
     #[test]
@@ -224,6 +273,29 @@ mod tests {
         st.capped_at = Some(165);
         assert_eq!(limit(&st), Limit::Capped(165));
         assert!(verdict(&st).0 && verdict(&st).1.contains("165 FPS"));
+    }
+
+    #[test]
+    fn overheating_threshold() {
+        let mut st = s(60.0, 25.0, 3.0);
+        assert!(overheating(&st).is_none());
+        st.heat = Some((5, 83));
+        assert!(overheating(&st).is_none());
+        st.heat = Some((40, 87));
+        assert!(overheating(&st).unwrap().1.contains("40% of the measurement, at up to 87 °C"));
+    }
+
+    #[test]
+    fn vram_full_threshold() {
+        const GB: u64 = 1 << 30;
+        let mut st = s(60.0, 25.0, 3.0);
+        assert!(vram_full(&st).is_none());
+        st.vram = Some((7 * GB, 8 * GB)); // 87.5%: fine
+        assert!(vram_full(&st).is_none());
+        st.vram = Some((7 * GB + GB / 2, 8 * GB)); // 93.75%
+        assert!(vram_full(&st).unwrap().1.contains("7.5 of the graphics card's 8 GB"));
+        st.vram = Some((1, 0));
+        assert!(vram_full(&st).is_none());
     }
 
     #[test]

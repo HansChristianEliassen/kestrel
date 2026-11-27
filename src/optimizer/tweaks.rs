@@ -311,9 +311,9 @@ impl Tweak {
             ),
             Tweak::NvShaderCache => (
                 "NVIDIA gaming profile",
-                "One profile in the driver's global settings (NVIDIA Control Panel > Manage 3D settings), for every game: Power management mode Prefer maximum performance, Low Latency Mode On, Preferred refresh rate Highest available, Shader Cache Size 10 GB (a bigger size you set is kept), and on RTX 40 and 50 cards the latest DLSS model (RTX 20 and 30 cards keep their DLSS setting, since the newest model costs FPS there). With G-SYNC on for your main display it adds G-SYNC's lowest-latency setup: Vertical sync On and a frame rate cap a little under the refresh rate, as NVIDIA Reflex picks it.",
+                "One profile in the driver's global settings (NVIDIA Control Panel > Manage 3D settings), for every game: Power management mode Prefer maximum performance, Low Latency Mode On, Preferred refresh rate Highest available, Background Application Max Frame Rate 30 (a game you've alt-tabbed out of runs at 30 FPS, so the card cools down), Shader Cache Size 10 GB (a bigger size you set is kept), and on RTX 40 and 50 cards the latest DLSS model (RTX 20 and 30 cards keep their DLSS setting, since the newest model costs FPS there). With G-SYNC on for your main display it adds G-SYNC's lowest-latency setup: Vertical sync On and a frame rate cap a little under the refresh rate, as NVIDIA Reflex picks it.",
                 "No downclocking mid-game, less input lag in DirectX 11 games when the graphics card is the limit, fewer shader-compile hitches, and a sharper DLSS image at no cost on new cards.",
-                "The graphics card may stay at higher clocks on the desktop too, using more power and running warmer. Uses up to 10 GB of disk for shaders. With G-SYNC, FPS is capped just under the refresh rate, and games on a second, non-G-SYNC screen get VSync. Games with NVIDIA Reflex use Reflex instead of Low Latency Mode.",
+                "The graphics card may stay at higher clocks on the desktop too, using more power and running warmer. Uses up to 10 GB of disk for shaders. With G-SYNC, FPS is capped just under the refresh rate, and games on a second, non-G-SYNC screen get VSync. A game you watch on a second screen while another window has focus runs at 30 FPS. Games with NVIDIA Reflex use Reflex instead of Low Latency Mode.",
             ),
             Tweak::ServiceGrouping => (
                 "Group Windows services into fewer processes",
@@ -347,7 +347,7 @@ impl Tweak {
             ),
             Tweak::NvDlssPerformance => (
                 "DLSS in Performance mode",
-                "Games with DLSS use its Performance mode (rendering at half the resolution on each side), whatever DLSS mode the game is set to. Games without DLSS aren't affected.",
+                "Games with DLSS use its Performance mode (rendering at half the resolution on each side), whatever DLSS mode the game is set to. On RTX 20 and 30 cards it also picks DLSS 4's Preset K model, which runs much faster on them than the newest one. Games without DLSS aren't affected.",
                 "The largest FPS gain available in DLSS games.",
                 "A softer image than DLSS Quality or Balanced, most visible at 1080p.",
             ),

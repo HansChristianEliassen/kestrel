@@ -39,11 +39,16 @@ pub const PRERENDER_LIMIT: u32 = 0x007B_A09E;
 pub const DLSS_SR_OVERRIDE: u32 = 0x10E4_1E01;
 pub const DLSS_SR_PRESET: u32 = 0x10E4_1DF3;
 pub const DLSS_PRESET_LATEST: u32 = 0x00FF_FFFF;
+/// Preset K, the first transformer model (DLSS 4.0): presets count from A = 1.
+const DLSS_PRESET_K: u32 = 0x0B;
 /// "Vertical Sync" (Force on) and "Frame Rate Limiter" (frames per second), for the G-SYNC setup.
 const VSYNC_MODE: u32 = 0x00A8_79CF;
 const VSYNC_FORCE_ON: u32 = 0x4781_4940;
 const VSYNC_FORCE_OFF: u32 = 0x0841_6747;
 /// "Preferred refresh rate": 1 = Highest available.
+/// "Background Application Max Frame Rate" (FPS, 0 = off): the NVIDIA Control Panel setting, not in NVIDIA's public
+/// header (ID from NVIDIA Profile Inspector's list).
+const BACKGROUND_FRAME_LIMIT: u32 = 0x1083_5005;
 const REFRESH_RATE: u32 = 0x0064_B541;
 // "Texture filtering": Quality (20 = High performance), Anisotropic sample and filter optimizations.
 const TEX_QUALITY: u32 = 0x00CE_2691;
@@ -421,7 +426,11 @@ impl Boost {
             ],
             // On, for DirectX 12 and DirectX 11 games.
             Boost::SmoothMotion => &[(SMOOTH_MOTION, Val::D(1)), (SMOOTH_MOTION_APIS, Val::D(3))],
-            // DLSS Super Resolution override on, in Performance mode (0).
+            // DLSS Super Resolution override on, in Performance mode (0). On RTX 20 and 30 cards also Preset K: the
+            // NVIDIA App's "Recommended" picks Preset M for Performance mode, which is much slower there (no FP8).
+            Boost::DlssPerformance if !dlss_model_is_free() => {
+                &[(DLSS_SR_OVERRIDE, Val::D(1)), (DLSS_SR_MODE, Val::D(0)), (DLSS_SR_PRESET, Val::D(DLSS_PRESET_K))]
+            }
             Boost::DlssPerformance => &[(DLSS_SR_OVERRIDE, Val::D(1)), (DLSS_SR_MODE, Val::D(0))],
             // Frame Generation override on, three generated frames per rendered one (4x).
             Boost::FrameGenMax => &[(DLSS_FG_OVERRIDE, Val::D(1)), (DLSSG_MULTI_FRAME_COUNT, Val::D(3))],
@@ -473,13 +482,18 @@ impl Boost {
     pub fn restore(self, saved: &str) -> Result<(), String> {
         let drs = Drs::open()?;
         let base = drs.base_profile()?;
-        for ((id, _), p) in self.values().iter().zip(saved.split(',')) {
+        let mut saved = saved.split(',');
+        for (id, v) in self.values() {
+            let p = saved.next();
             if *id == DLSS_SR_OVERRIDE && dlss_model_is_free() && profile_applied() {
                 continue;
             }
             match p {
-                "-" => drs.clear_in(base, *id)?,
-                p => drs.set_val_in(base, *id, Val::parse(p).ok_or("Saved value is invalid.")?)?,
+                Some("-") => drs.clear_in(base, *id)?,
+                Some(p) => drs.set_val_in(base, *id, Val::parse(p).ok_or("Saved value is invalid.")?)?,
+                // Saved by an older version that didn't set this one: clear it only if it still holds Kestrel's value.
+                None if drs.get_val_in(base, *id)? == Some(*v) => drs.clear_in(base, *id)?,
+                None => {}
             }
         }
         drs.save()
@@ -519,8 +533,17 @@ fn rtx_series(name: &str) -> Option<u32> {
 
 /// The global settings Kestrel's NVIDIA gaming profile manages, in the order its saved original lists them.
 /// Settings added later go at the end, so originals saved by earlier versions still line up.
-const PROFILE: [u32; 8] =
-    [SHADER_CACHE_SIZE, POWER_MODE, PRERENDER_LIMIT, DLSS_SR_OVERRIDE, DLSS_SR_PRESET, VSYNC_MODE, FRAME_LIMIT, REFRESH_RATE];
+const PROFILE: [u32; 9] = [
+    SHADER_CACHE_SIZE,
+    POWER_MODE,
+    PRERENDER_LIMIT,
+    DLSS_SR_OVERRIDE,
+    DLSS_SR_PRESET,
+    VSYNC_MODE,
+    FRAME_LIMIT,
+    REFRESH_RATE,
+    BACKGROUND_FRAME_LIMIT,
+];
 
 /// The global profile's own values of these settings (None where it doesn't set one).
 fn global(ids: &[u32]) -> Result<Vec<Option<u32>>, String> {
@@ -550,6 +573,8 @@ fn profile_values(cache_now: Option<u32>) -> Vec<(u32, Option<u32>)> {
         (POWER_MODE, Some(1)),
         (PRERENDER_LIMIT, Some(1)),
         (REFRESH_RATE, Some(1)),
+        // A game that isn't the focused window runs at 30 FPS, so the card cools down while you're alt-tabbed.
+        (BACKGROUND_FRAME_LIMIT, Some(30)),
     ];
     if dlss_model_is_free() {
         v.extend([(DLSS_SR_OVERRIDE, Some(1)), (DLSS_SR_PRESET, Some(DLSS_PRESET_LATEST))]);
@@ -710,6 +735,30 @@ mod tests {
         assert!(b.is_applied());
         b.restore(&before).unwrap();
         assert_eq!(b.snapshot().unwrap(), before, "originals back exactly");
+    }
+
+    #[test]
+    #[ignore = "applies the DLSS switch to this PC's global driver settings (RTX 20/30 card) and puts the originals back"]
+    fn live_dlss_preset_k_round_trip() {
+        let b = Boost::DlssPerformance;
+        assert!(!dlss_model_is_free(), "needs an RTX 20 or 30 card");
+        let before = b.snapshot().unwrap();
+        b.apply().unwrap();
+        println!("before {before}, during {}", b.snapshot().unwrap());
+        assert!(b.is_applied() && b.snapshot().unwrap().ends_with(",11"));
+        b.restore(&before).unwrap();
+        assert_eq!(b.snapshot().unwrap(), before, "originals back exactly");
+        // An original saved by an older version (no preset field): Kestrel's Preset K is cleared again.
+        b.apply().unwrap();
+        let old: Vec<&str> = before.split(',').take(2).collect();
+        b.restore(&old.join(",")).unwrap();
+        assert!(b.snapshot().unwrap().ends_with(",-"));
+        let drs = Drs::open().unwrap();
+        if let Some(p) = before.split(',').nth(2).and_then(Val::parse) {
+            drs.set_val_in(drs.base_profile().unwrap(), DLSS_SR_PRESET, p).unwrap();
+            drs.save().unwrap();
+        }
+        assert_eq!(b.snapshot().unwrap(), before);
     }
 
     #[test]
