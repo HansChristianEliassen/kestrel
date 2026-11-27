@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.31.1: NVIDIA gaming profile fix
+- **Turning on the NVIDIA gaming profile failed with "NVIDIA error -160".** 0.31.0 added a cap for games in the background (Background Application Max Frame Rate). That setting isn't in NVIDIA's public settings, and current drivers reject it, so the whole profile failed and changed nothing. The cap is removed; the rest of the profile applies as before.
+- An NVIDIA setting the installed driver doesn't have now says so ("this NVIDIA driver doesn't have that setting for your graphics card") instead of showing the raw error number.
+- Resizable BAR in every game is marked as needing administrator rights: NVIDIA's driver only accepts those settings from an administrator.
+
 ## 0.31.0: For older graphics cards
 Researched for an RTX 2070 SUPER and other older cards, keeping only what testing shows works.
 - **Measure warns when graphics memory is full:** Kestrel records the card's peak memory use during the 60-second measurement. At 90% or more, the first piece of advice is to lower Texture quality one step, which often frees 1 to 2 GB with little visible difference. On 8 GB cards this is the most common cause of hitches in recent games.

@@ -46,9 +46,6 @@ const VSYNC_MODE: u32 = 0x00A8_79CF;
 const VSYNC_FORCE_ON: u32 = 0x4781_4940;
 const VSYNC_FORCE_OFF: u32 = 0x0841_6747;
 /// "Preferred refresh rate": 1 = Highest available.
-/// "Background Application Max Frame Rate" (FPS, 0 = off): the NVIDIA Control Panel setting, not in NVIDIA's public
-/// header (ID from NVIDIA Profile Inspector's list).
-const BACKGROUND_FRAME_LIMIT: u32 = 0x1083_5005;
 const REFRESH_RATE: u32 = 0x0064_B541;
 // "Texture filtering": Quality (20 = High performance), Anisotropic sample and filter optimizations.
 const TEX_QUALITY: u32 = 0x00CE_2691;
@@ -351,6 +348,8 @@ fn check(status: Status, what: &str) -> Result<(), String> {
         -3 => Err(format!("Couldn't {what}: no NVIDIA graphics card is active.")),
         // NVAPI_INVALID_USER_PRIVILEGE
         -137 => Err(format!("Couldn't {what}: needs administrator rights.")),
+        // NVAPI_SETTING_NOT_FOUND: the installed driver doesn't have this setting (for this card).
+        -160 => Err(format!("Couldn't {what}: this NVIDIA driver doesn't have that setting for your graphics card.")),
         s => Err(format!("Couldn't {what} (NVIDIA error {s}).")),
     }
 }
@@ -533,17 +532,8 @@ fn rtx_series(name: &str) -> Option<u32> {
 
 /// The global settings Kestrel's NVIDIA gaming profile manages, in the order its saved original lists them.
 /// Settings added later go at the end, so originals saved by earlier versions still line up.
-const PROFILE: [u32; 9] = [
-    SHADER_CACHE_SIZE,
-    POWER_MODE,
-    PRERENDER_LIMIT,
-    DLSS_SR_OVERRIDE,
-    DLSS_SR_PRESET,
-    VSYNC_MODE,
-    FRAME_LIMIT,
-    REFRESH_RATE,
-    BACKGROUND_FRAME_LIMIT,
-];
+const PROFILE: [u32; 8] =
+    [SHADER_CACHE_SIZE, POWER_MODE, PRERENDER_LIMIT, DLSS_SR_OVERRIDE, DLSS_SR_PRESET, VSYNC_MODE, FRAME_LIMIT, REFRESH_RATE];
 
 /// The global profile's own values of these settings (None where it doesn't set one).
 fn global(ids: &[u32]) -> Result<Vec<Option<u32>>, String> {
@@ -573,8 +563,6 @@ fn profile_values(cache_now: Option<u32>) -> Vec<(u32, Option<u32>)> {
         (POWER_MODE, Some(1)),
         (PRERENDER_LIMIT, Some(1)),
         (REFRESH_RATE, Some(1)),
-        // A game that isn't the focused window runs at 30 FPS, so the card cools down while you're alt-tabbed.
-        (BACKGROUND_FRAME_LIMIT, Some(30)),
     ];
     if dlss_model_is_free() {
         v.extend([(DLSS_SR_OVERRIDE, Some(1)), (DLSS_SR_PRESET, Some(DLSS_PRESET_LATEST))]);
