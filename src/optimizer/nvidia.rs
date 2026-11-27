@@ -39,8 +39,8 @@ pub const PRERENDER_LIMIT: u32 = 0x007B_A09E;
 pub const DLSS_SR_OVERRIDE: u32 = 0x10E4_1E01;
 pub const DLSS_SR_PRESET: u32 = 0x10E4_1DF3;
 pub const DLSS_PRESET_LATEST: u32 = 0x00FF_FFFF;
-/// Preset K, the first transformer model (DLSS 4.0): presets count from A = 1.
-const DLSS_PRESET_K: u32 = 0x0B;
+/// Preset E, the last CNN model and the fastest on RTX 20 and 30 cards (presets count from A = 1).
+const DLSS_PRESET_E: u32 = 5;
 /// "Vertical Sync" (Force on) and "Frame Rate Limiter" (frames per second), for the G-SYNC setup.
 const VSYNC_MODE: u32 = 0x00A8_79CF;
 const VSYNC_FORCE_ON: u32 = 0x4781_4940;
@@ -425,10 +425,11 @@ impl Boost {
             ],
             // On, for DirectX 12 and DirectX 11 games.
             Boost::SmoothMotion => &[(SMOOTH_MOTION, Val::D(1)), (SMOOTH_MOTION_APIS, Val::D(3))],
-            // DLSS Super Resolution override on, in Performance mode (0). On RTX 20 and 30 cards also Preset K: the
-            // NVIDIA App's "Recommended" picks Preset M for Performance mode, which is much slower there (no FP8).
+            // DLSS Super Resolution override on, in Performance mode (0). On RTX 20 and 30 cards also Preset E (CNN):
+            // the transformer models (K, and DLSS 4.5's M and L) cost 15 to 25% of FPS there, more than Performance
+            // mode gains, and the NVIDIA App's "Recommended" would pick M.
             Boost::DlssPerformance if !dlss_model_is_free() => {
-                &[(DLSS_SR_OVERRIDE, Val::D(1)), (DLSS_SR_MODE, Val::D(0)), (DLSS_SR_PRESET, Val::D(DLSS_PRESET_K))]
+                &[(DLSS_SR_OVERRIDE, Val::D(1)), (DLSS_SR_MODE, Val::D(0)), (DLSS_SR_PRESET, Val::D(DLSS_PRESET_E))]
             }
             Boost::DlssPerformance => &[(DLSS_SR_OVERRIDE, Val::D(1)), (DLSS_SR_MODE, Val::D(0))],
             // Frame Generation override on, three generated frames per rendered one (4x).
@@ -727,16 +728,16 @@ mod tests {
 
     #[test]
     #[ignore = "applies the DLSS switch to this PC's global driver settings (RTX 20/30 card) and puts the originals back"]
-    fn live_dlss_preset_k_round_trip() {
+    fn live_dlss_preset_round_trip() {
         let b = Boost::DlssPerformance;
         assert!(!dlss_model_is_free(), "needs an RTX 20 or 30 card");
         let before = b.snapshot().unwrap();
         b.apply().unwrap();
         println!("before {before}, during {}", b.snapshot().unwrap());
-        assert!(b.is_applied() && b.snapshot().unwrap().ends_with(",11"));
+        assert!(b.is_applied() && b.snapshot().unwrap().ends_with(",5"));
         b.restore(&before).unwrap();
         assert_eq!(b.snapshot().unwrap(), before, "originals back exactly");
-        // An original saved by an older version (no preset field): Kestrel's Preset K is cleared again.
+        // An original saved by an older version (no preset field): Kestrel's preset is cleared again.
         b.apply().unwrap();
         let old: Vec<&str> = before.split(',').take(2).collect();
         b.restore(&old.join(",")).unwrap();

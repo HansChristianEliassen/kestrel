@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.31.2: Faster DLSS on RTX 20 and 30 cards
+- **"DLSS in Performance mode" now uses Preset E on RTX 20 and 30 cards** instead of Preset K. Preset K is DLSS 4's transformer model: it looks sharper, but on these cards (no FP8 support) it costs 15 to 25% of FPS, more than Performance mode gains. With 0.31.0 a game already on DLSS could get slower: one RTX 2070 SUPER went from 154 to 132 FPS in Call of Duty. Preset E (CNN) is the fastest model on these cards. RTX 40 and 50 cards are unchanged.
+- If you turned the switch on with 0.31, it now shows as changed: switch it off and on again to get Preset E.
+
 ## 0.31.1: NVIDIA gaming profile fix
 - **Turning on the NVIDIA gaming profile failed with "NVIDIA error -160".** 0.31.0 added a cap for games in the background (Background Application Max Frame Rate). That setting isn't in NVIDIA's public settings, and current drivers reject it, so the whole profile failed and changed nothing. The cap is removed; the rest of the profile applies as before.
 - An NVIDIA setting the installed driver doesn't have now says so ("this NVIDIA driver doesn't have that setting for your graphics card") instead of showing the raw error number.

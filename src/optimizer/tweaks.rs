@@ -348,7 +348,7 @@ impl Tweak {
             ),
             Tweak::NvDlssPerformance => (
                 "DLSS in Performance mode",
-                "Games with DLSS use its Performance mode (rendering at half the resolution on each side), whatever DLSS mode the game is set to. On RTX 20 and 30 cards it also picks DLSS 4's Preset K model, which runs much faster on them than the newest one. Games without DLSS aren't affected.",
+                "Games with DLSS use its Performance mode (rendering at half the resolution on each side), whatever DLSS mode the game is set to. On RTX 20 and 30 cards it also picks Preset E, the fastest DLSS model there: the newer transformer models look sharper but cost 15 to 25% of FPS on those cards, more than Performance mode gains. Games without DLSS aren't affected.",
                 "The largest FPS gain available in DLSS games.",
                 "A softer image than DLSS Quality or Balanced, most visible at 1080p.",
             ),
